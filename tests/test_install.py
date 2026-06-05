@@ -7,6 +7,7 @@ from install import (
     build_postfix_backup_path,
     build_post_install_verification_commands,
     build_venv_python_path,
+    can_use_gum_interactively,
     cron_expression,
     ldap_port_from_server,
     should_use_gum,
@@ -78,6 +79,12 @@ class InstallTests(unittest.TestCase):
         self.assertFalse(should_use_gum(gum_present=True, user_requested=False))
         self.assertTrue(should_use_gum(gum_present=True, user_requested=True))
         self.assertFalse(should_use_gum(gum_present=False, user_requested=True))
+
+    def test_can_use_gum_interactively_requires_tty_and_term(self):
+        self.assertTrue(can_use_gum_interactively(stdin_isatty=True, stdout_isatty=True, term="xterm-256color"))
+        self.assertFalse(can_use_gum_interactively(stdin_isatty=False, stdout_isatty=True, term="xterm-256color"))
+        self.assertFalse(can_use_gum_interactively(stdin_isatty=True, stdout_isatty=False, term="xterm-256color"))
+        self.assertFalse(can_use_gum_interactively(stdin_isatty=True, stdout_isatty=True, term="dumb"))
 
 
 if __name__ == "__main__":

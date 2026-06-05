@@ -22,6 +22,7 @@ LOCK_PATH = Path("/var/lock/ad-password-sentinel.lock")
 VENV_DIR = INSTALL_DIR / ".venv"
 LOGROTATE_PATH = Path("/etc/logrotate.d/ad-password-sentinel")
 USE_GUM = False
+GUM_TIMEOUT_SECONDS = 15
 
 
 def gum_available():
@@ -30,6 +31,24 @@ def gum_available():
 
 def should_use_gum(gum_present, user_requested):
     return gum_present and user_requested
+
+
+def can_use_gum_interactively(stdin_isatty, stdout_isatty, term):
+    return stdin_isatty and stdout_isatty and bool(term) and term != "dumb"
+
+
+def run_gum(command, capture_output=False):
+    try:
+        return subprocess.run(
+            command,
+            text=True,
+            capture_output=capture_output,
+            check=False,
+            timeout=GUM_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        print("gum prompt timed out. Falling back to plain prompts.")
+        return None
 
 
 def plain_prompt(label, default=None, secret=False):
@@ -79,9 +98,9 @@ def gum_input(label, default=None, secret=False):
     if secret:
         command.append("--password")
 
-    result = subprocess.run(command, text=True, capture_output=True, check=False)
+    result = run_gum(command, capture_output=True)
 
-    if result.returncode != 0:
+    if result is None or result.returncode != 0:
         return plain_prompt(label, default, secret)
 
     value = result.stdout.strip()
@@ -94,9 +113,9 @@ def gum_confirm(label, default=False):
     if default:
         command.append("--default=true")
 
-    result = subprocess.run(command, check=False)
+    result = run_gum(command)
 
-    if result.returncode in (0, 1):
+    if result is not None and result.returncode in (0, 1):
         return result.returncode == 0
 
     return plain_yes_no(label, default)
@@ -106,9 +125,9 @@ def gum_choose(label, choices, default=None):
     print(label)
     command = ["gum", "choose"]
     command.extend(choices)
-    result = subprocess.run(command, text=True, capture_output=True, check=False)
+    result = run_gum(command, capture_output=True)
 
-    if result.returncode != 0:
+    if result is None or result.returncode != 0:
         return plain_choose(label, choices, default)
 
     value = result.stdout.strip()
@@ -217,6 +236,11 @@ def install_gum():
 
 def configure_prompt_backend():
     global USE_GUM
+
+    if not can_use_gum_interactively(sys.stdin.isatty(), sys.stdout.isatty(), os.environ.get("TERM", "")):
+        print("Interactive terminal not detected. Using plain prompts.")
+        USE_GUM = False
+        return
 
     if command_exists("gum"):
         USE_GUM = should_use_gum(

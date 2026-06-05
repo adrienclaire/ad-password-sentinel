@@ -59,7 +59,7 @@ sudo apt update
 sudo apt install gum
 ```
 
-`gum` is optional. The installer asks before using it, and if it is missing it can offer to install it on supported Linux distributions.
+`gum` is optional. The installer asks before using it, and if it is missing it can offer to install it on supported Linux distributions. If a `gum` prompt cannot render correctly under `sudo`, the installer times out and falls back to plain prompts.
 
 Windows:
 
@@ -177,7 +177,7 @@ Run as root:
 python3 install.py
 ```
 
-The installer prompts for LDAP settings, mail settings, whether to notify users, and cron frequency. It starts with plain terminal prompts, then asks whether to use or install `gum` for richer prompts. The recommended schedule is every day at 08:00.
+The installer prompts for LDAP settings, mail settings, whether to notify users, and cron frequency. It starts with plain terminal prompts, then asks whether to use or install `gum` for richer prompts. If `gum` blocks or the terminal is not interactive, it falls back to plain prompts. The recommended schedule is every day at 08:00.
 
 Cron choices:
 
