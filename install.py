@@ -21,10 +21,15 @@ PROJECT_DIR = Path(__file__).resolve().parent
 LOCK_PATH = Path("/var/lock/ad-password-sentinel.lock")
 VENV_DIR = INSTALL_DIR / ".venv"
 LOGROTATE_PATH = Path("/etc/logrotate.d/ad-password-sentinel")
+USE_GUM = False
 
 
 def gum_available():
-    return command_exists("gum")
+    return USE_GUM and command_exists("gum")
+
+
+def should_use_gum(gum_present, user_requested):
+    return gum_present and user_requested
 
 
 def plain_prompt(label, default=None, secret=False):
@@ -179,6 +184,52 @@ def detect_package_manager():
             return manager
 
     return None
+
+
+def install_gum():
+    manager = detect_package_manager()
+
+    if manager is None:
+        print("No supported package manager found. Continuing with plain prompts.")
+        return False
+
+    if manager == "apt-get":
+        if not command_exists("curl") or not command_exists("gpg"):
+            print("Installing gum on Debian/Ubuntu requires curl and gpg. Continuing with plain prompts.")
+            return False
+
+        key_path = "/tmp/charm.gpg.key"
+        run(["mkdir", "-p", "/etc/apt/keyrings"])
+        run(["curl", "-fsSL", "https://repo.charm.sh/apt/gpg.key", "-o", key_path])
+        run(["gpg", "--dearmor", "--yes", "-o", "/etc/apt/keyrings/charm.gpg", key_path])
+
+        Path("/etc/apt/sources.list.d/charm.list").write_text(
+            "deb [signed-by=/etc/apt/keyrings/charm.gpg] https://repo.charm.sh/apt/ * *\n",
+            encoding="utf-8"
+        )
+        run(["apt-get", "update"])
+        run(["apt-get", "install", "-y", "gum"])
+        return command_exists("gum")
+
+    run([manager, "install", "-y", "gum"])
+    return command_exists("gum")
+
+
+def configure_prompt_backend():
+    global USE_GUM
+
+    if command_exists("gum"):
+        USE_GUM = should_use_gum(
+            gum_present=True,
+            user_requested=plain_yes_no("Use gum for richer installer prompts", False),
+        )
+        return
+
+    if plain_yes_no("gum is not installed. Install gum for richer prompts", False):
+        USE_GUM = install_gum()
+
+        if not USE_GUM:
+            print("gum is unavailable. Continuing with plain prompts.")
 
 
 def install_postfix():
@@ -470,6 +521,7 @@ def main():
 
     print(APP_NAME)
     print("Linux installer")
+    configure_prompt_backend()
 
     mail_mode = choose(
         "Mail transport",

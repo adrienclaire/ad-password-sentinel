@@ -9,6 +9,7 @@ from install import (
     build_venv_python_path,
     cron_expression,
     ldap_port_from_server,
+    should_use_gum,
 )
 
 
@@ -72,6 +73,11 @@ class InstallTests(unittest.TestCase):
         self.assertIn("--check-config", joined)
         self.assertIn("--check-ldap", joined)
         self.assertIn("--send-test-mail it-support@example.com", joined)
+
+    def test_should_use_gum_requires_explicit_opt_in(self):
+        self.assertFalse(should_use_gum(gum_present=True, user_requested=False))
+        self.assertTrue(should_use_gum(gum_present=True, user_requested=True))
+        self.assertFalse(should_use_gum(gum_present=False, user_requested=True))
 
 
 if __name__ == "__main__":
