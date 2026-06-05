@@ -83,6 +83,12 @@ The installer also checks for a local mail transport. If Postfix/sendmail is mis
 
 ## Roadmap
 
+Status:
+
+- Phase 1 is implemented: shareable Python script, safe config template, Linux installer, cron prompt, docs, and tests.
+- Phase 2 is not complete: richer terminal UI and guided Postfix configuration are planned.
+- Phase 3 is not complete: Windows/PowerShell and Docker-on-Windows support are planned.
+
 Phase 2:
 
 - Improve the installer into a richer interactive shell experience, likely using `gum` when available with a plain shell fallback.
@@ -97,4 +103,4 @@ Phase 3:
 
 ## License
 
-No license has been selected yet. Keep the repository private until you choose one.
+MIT. See `LICENSE`.
