@@ -20,6 +20,8 @@ AD Password Sentinel handles directory credentials and employee account metadata
 
 The default runtime uses the local `sendmail` interface. Configure Postfix or another MTA before disabling test mode. Validate sender domains, relay permissions, and mail logs in a non-production run first.
 
+The installer can configure a basic Postfix SMTP relay. Review generated relay settings before using production credentials, and keep `/etc/postfix/sasl_passwd` mode `600` when SMTP auth is enabled.
+
 ## LDAPS Certificate Trust
 
 For LDAPS, the Linux VM or container must trust the certificate chain presented by the domain controller. If the DC certificate is valid but untrusted, install the issuing CA certificate or DC certificate into the host trust store:
@@ -29,6 +31,10 @@ For LDAPS, the Linux VM or container must trust the certificate chain presented 
 - Docker: copy the certificate into the image and run the trust update command during the build.
 
 If the DC certificate is expired, trust-store installation is not enough. Replace the DC certificate when possible, or use the explicit LDAP fallback while accepting the transport risk.
+
+## Scheduled Runs
+
+Cron entries created by the installer use `flock` with `/var/lock/ad-password-sentinel.lock` to prevent overlapping runs. Keep this lock in place when editing cron manually.
 
 ## Reporting Issues
 

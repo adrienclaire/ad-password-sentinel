@@ -9,4 +9,5 @@
 - Added optional end-user notifications.
 - Added installer prompts for Linux deployment and cron scheduling.
 - Added ECC-style validation notes.
+- Added Phase 2 installer improvements with optional `gum`, LDAP preflight, Postfix relay guidance, non-overlapping cron, and runtime preflight commands.
 - Added Python dependency list and professional project documentation.

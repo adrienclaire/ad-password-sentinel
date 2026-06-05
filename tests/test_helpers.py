@@ -8,6 +8,7 @@ from notify_ad_password_expiry import (
     validate_email,
     validate_ldap_security,
     validate_sendmail_path,
+    parse_args,
     windows_filetime_to_datetime,
 )
 
@@ -51,6 +52,15 @@ class HelperTests(unittest.TestCase):
     def test_validate_sendmail_path_requires_absolute_path(self):
         with self.assertRaises(RuntimeError):
             validate_sendmail_path("sendmail")
+
+    def test_parse_args_supports_check_config(self):
+        args = parse_args(["--config", "config.env", "--check-config"])
+        self.assertEqual(args.config, "config.env")
+        self.assertTrue(args.check_config)
+
+    def test_parse_args_supports_test_mail_recipient(self):
+        args = parse_args(["--send-test-mail", "admin@example.com"])
+        self.assertEqual(args.send_test_mail, "admin@example.com")
 
 
 if __name__ == "__main__":

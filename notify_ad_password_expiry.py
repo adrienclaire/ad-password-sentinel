@@ -491,15 +491,59 @@ def parse_args(argv):
         default=os.environ.get("AD_PASSWORD_SENTINEL_CONFIG", DEFAULT_CONFIG_PATH),
         help=f"Path to config.env (default: {DEFAULT_CONFIG_PATH})"
     )
+    parser.add_argument(
+        "--check-config",
+        action="store_true",
+        help="Validate configuration and exit without querying LDAP"
+    )
+    parser.add_argument(
+        "--check-ldap",
+        action="store_true",
+        help="Validate configuration, bind to LDAP, then exit"
+    )
+    parser.add_argument(
+        "--send-test-mail",
+        metavar="EMAIL",
+        help="Send a test email to EMAIL using the configured mail settings"
+    )
 
     return parser.parse_args(argv)
 
 
+def load_and_validate_config(config_path):
+    validate_config_file_permissions(config_path)
+    config = load_env_file(config_path)
+    validate_config(config, config_path)
+    return config
+
+
+def check_ldap(config):
+    connection = build_ldap_connection(config)
+    connection.unbind()
+
+
 def main(argv=None):
     args = parse_args(argv or sys.argv[1:])
-    validate_config_file_permissions(args.config)
-    config = load_env_file(args.config)
-    validate_config(config, args.config)
+    config = load_and_validate_config(args.config)
+
+    if args.check_config:
+        print("[OK] Configuration is valid.")
+        return
+
+    if args.check_ldap:
+        check_ldap(config)
+        print("[OK] LDAP bind succeeded.")
+        return
+
+    if args.send_test_mail:
+        send_local_mail(
+            config,
+            args.send_test_mail,
+            f"[{APP_NAME}] Test email",
+            "AD Password Sentinel test email."
+        )
+        print(f"[OK] Test email processed for {args.send_test_mail}.")
+        return
 
     warning_days = parse_int(config, "WARNING_DAYS", 14, minimum=0)
     tech_report_to = get_required(config, "TECH_REPORT_TO")

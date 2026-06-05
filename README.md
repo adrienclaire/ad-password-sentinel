@@ -17,6 +17,7 @@ AD Password Sentinel notifies IT teams, and optionally users, before Active Dire
 - LDAP network access to a domain controller.
 - A least-privilege AD bind account.
 - Local `sendmail` interface, usually provided by Postfix, when `TEST_MODE=false`.
+- Optional: `gum` for nicer installer prompts. The installer falls back to plain Python prompts when `gum` is not installed.
 
 Install Python dependencies:
 
@@ -101,6 +102,14 @@ chmod 600 config.env
 python3 notify_ad_password_expiry.py --config ./config.env
 ```
 
+Useful preflight commands:
+
+```bash
+python3 notify_ad_password_expiry.py --config ./config.env --check-config
+python3 notify_ad_password_expiry.py --config ./config.env --check-ldap
+python3 notify_ad_password_expiry.py --config ./config.env --send-test-mail it-support@example.com
+```
+
 For production Linux installs, the default config path is:
 
 ```text
@@ -115,7 +124,7 @@ Run as root:
 python3 install.py
 ```
 
-The installer prompts for LDAP settings, mail settings, whether to notify users, and cron frequency. The recommended schedule is every day at 08:00.
+The installer prompts for LDAP settings, mail settings, whether to notify users, and cron frequency. If `gum` is installed, it uses richer terminal prompts; otherwise it uses plain Python prompts. The recommended schedule is every day at 08:00.
 
 Cron choices:
 
@@ -124,6 +133,15 @@ Cron choices:
 - Monday, Wednesday, Friday at 08:00.
 
 The installer also checks for a local mail transport. If Postfix/sendmail is missing, it can install Postfix on common Linux distributions or leave `TEST_MODE=true` until you configure mail manually.
+
+Mail transport choices:
+
+- Use existing sendmail/Postfix.
+- Install Postfix.
+- Configure a Postfix SMTP relay with relay host, port, TLS, and optional SMTP auth.
+- Skip mail setup and keep `TEST_MODE=true`.
+
+Cron entries use `flock` so a slow run does not overlap with the next scheduled run.
 
 ## Production Safety Checklist
 
@@ -140,15 +158,15 @@ The installer also checks for a local mail transport. If Postfix/sendmail is mis
 Status:
 
 - Phase 1 is implemented: shareable Python script, safe config template, Linux installer, cron prompt, docs, and tests.
-- Phase 2 is not complete: richer terminal UI and guided Postfix configuration are planned.
+- Phase 2 is partially implemented: `gum`-aware installer prompts, LDAP/LDAPS TCP preflight, Postfix relay guidance, non-overlapping cron, `--check-config`, `--check-ldap`, and `--send-test-mail`.
 - Phase 3 is not complete: Windows/PowerShell and Docker-on-Windows support are planned.
 
 Phase 2:
 
-- Improve the installer into a richer interactive shell experience, likely using `gum` when available with a plain shell fallback.
-- Add guided Postfix configuration for relay host, sender domain, authentication, and TLS.
-- Add guided LDAP/LDAPS setup, including certificate trust checks and an explicit LDAP fallback acknowledgement.
-- Add stronger validation for LDAP and mail configuration before cron is installed.
+- Add a stronger post-install verification flow that runs config, LDAP, and mail checks together.
+- Add better Postfix backup/rollback handling before changing relay settings.
+- Add optional log rotation setup.
+- Add dependency installation into a dedicated virtual environment.
 
 Phase 3:
 
