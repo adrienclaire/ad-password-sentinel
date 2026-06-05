@@ -6,4 +6,8 @@ if [ ! -f /etc/ad-password-sentinel/config.env ]; then
     exit 1
 fi
 
+if [ -f /usr/local/share/ca-certificates/ad-password-sentinel-dc.crt ]; then
+    update-ca-certificates
+fi
+
 cron -f

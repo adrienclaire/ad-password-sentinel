@@ -2,7 +2,7 @@
   "AdServer": "dc01.example.local",
   "SearchBase": "DC=example,DC=local",
   "BindUser": "svc_ad_password_sentinel@example.local",
-  "BindPassword": "change-me",
+  "CredentialPath": "C:\\ADPasswordSentinel\\bind-credential.xml",
   "WarningDays": 14,
   "MailFrom": "noreply@example.com",
   "TechReportTo": "it-support@example.com",

@@ -25,7 +25,6 @@ function Test-RequiredConfig {
         "AdServer",
         "SearchBase",
         "BindUser",
-        "BindPassword",
         "MailFrom",
         "TechReportTo",
         "SmtpServer"
@@ -36,10 +35,21 @@ function Test-RequiredConfig {
             throw "Missing required config value: $key"
         }
     }
+
+    if (
+        (-not $Config.PSObject.Properties.Name.Contains("CredentialPath") -or [string]::IsNullOrWhiteSpace($Config.CredentialPath)) -and
+        (-not $Config.PSObject.Properties.Name.Contains("BindPassword") -or [string]::IsNullOrWhiteSpace($Config.BindPassword))
+    ) {
+        throw "Missing required config value: CredentialPath or BindPassword"
+    }
 }
 
 function New-Credential {
     param($Config)
+
+    if ($Config.PSObject.Properties.Name.Contains("CredentialPath") -and -not [string]::IsNullOrWhiteSpace($Config.CredentialPath)) {
+        return Import-Clixml -LiteralPath $Config.CredentialPath
+    }
 
     $securePassword = ConvertTo-SecureString $Config.BindPassword -AsPlainText -Force
     New-Object System.Management.Automation.PSCredential($Config.BindUser, $securePassword)

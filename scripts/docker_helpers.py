@@ -9,3 +9,10 @@ def build_container_cron_command():
         f"{INSTALL_DIR}/.venv/bin/python {INSTALL_DIR}/notify_ad_password_expiry.py "
         f"--config {CONFIG_PATH}"
     )
+
+
+def build_ldaps_ca_mount(host_certificate_path):
+    return (
+        f"{host_certificate_path}:"
+        "/usr/local/share/ca-certificates/ad-password-sentinel-dc.crt:ro"
+    )

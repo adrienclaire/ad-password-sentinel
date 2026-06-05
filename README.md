@@ -156,10 +156,22 @@ The installer also:
 
 Use `Notify-AdPasswordExpiry.ps1` when the environment has no Linux host. It uses the Windows ActiveDirectory module and SMTP settings from `config.windows.example.json`.
 
+Create the DPAPI-protected AD bind credential:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\New-WindowsCredential.ps1 -UserName svc_ad_password_sentinel@example.local -CredentialPath C:\ADPasswordSentinel\bind-credential.xml
+```
+
 Manual test:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Notify-AdPasswordExpiry.ps1 -ConfigPath .\config.windows.example.json -CheckConfig
+```
+
+Interactive install helper:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\Install-Windows.ps1
 ```
 
 Register a daily 08:00 scheduled task:
@@ -184,6 +196,14 @@ The container runs cron at 08:00 daily and mounts:
 - `./config.env` to `/etc/ad-password-sentinel/config.env`
 - `./reports` to `/var/log/ad-password-sentinel`
 
+Optional LDAPS certificate mount:
+
+```yaml
+- ./certs/dc-or-ca.crt:/usr/local/share/ca-certificates/ad-password-sentinel-dc.crt:ro
+```
+
+When that file is mounted, the container refreshes CA trust at startup.
+
 ## Production Safety Checklist
 
 1. Use a dedicated read-only AD bind account.
@@ -200,7 +220,7 @@ Status:
 
 - Phase 1 is implemented: shareable Python script, safe config template, Linux installer, cron prompt, docs, and tests.
 - Phase 2 is implemented: `gum`-aware installer prompts, LDAP/LDAPS TCP preflight, Postfix relay guidance with backup/rollback, non-overlapping cron, virtualenv install, log rotation, and runtime preflight commands.
-- Phase 3 is started: Windows PowerShell runner, Task Scheduler helper, Dockerfile, and docker-compose baseline are present.
+- Phase 3 is expanded: Windows PowerShell runner, DPAPI credential helper, Task Scheduler installer, Dockerfile, docker-compose baseline, and optional Docker LDAPS certificate mount are present.
 
 Phase 2:
 

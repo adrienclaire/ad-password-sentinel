@@ -6,3 +6,5 @@ services:
     volumes:
       - ./config.env:/etc/ad-password-sentinel/config.env:ro
       - ./reports:/var/log/ad-password-sentinel
+      # Optional for LDAPS when the DC/CA certificate is valid but not trusted:
+      # - ./certs/dc-or-ca.crt:/usr/local/share/ca-certificates/ad-password-sentinel-dc.crt:ro

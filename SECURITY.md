@@ -40,7 +40,7 @@ The Linux installer runs the application from `/opt/ad-password-sentinel/.venv` 
 
 ## Windows And Docker
 
-The Windows runner uses a JSON config file containing credentials. Store it under a restricted directory such as `C:\ADPasswordSentinel`, limit ACLs to administrators and the scheduled task identity, and avoid committing it to git.
+The Windows runner supports `CredentialPath`, a DPAPI-protected credential exported with `Export-Clixml`. Prefer that over plaintext `BindPassword`. Store both JSON config and credential XML under a restricted directory such as `C:\ADPasswordSentinel`, limit ACLs to administrators and the scheduled task identity, and avoid committing them to git.
 
 The Docker path expects `config.env` to be mounted read-only into the container. Treat host-mounted reports as sensitive because they include account metadata and password-expiration dates.
 
