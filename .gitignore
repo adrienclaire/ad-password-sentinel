@@ -7,6 +7,7 @@ env/
 
 # Local secrets and generated output
 config.env
+config.windows.json
 *.env.local
 config.local.env
 ad-password-expiry-report.csv

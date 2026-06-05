@@ -10,6 +10,8 @@ AD Password Sentinel notifies IT teams, and optionally users, before Active Dire
 - Writes a CSV report for audit and troubleshooting.
 - Supports dry-run mail output with `TEST_MODE=true`.
 - Includes an interactive Linux installer with cron setup.
+- Includes a Windows PowerShell runner and Task Scheduler helper.
+- Includes a Docker deployment path for hosts that can run containers.
 
 ## Requirements
 
@@ -143,6 +145,45 @@ Mail transport choices:
 
 Cron entries use `flock` so a slow run does not overlap with the next scheduled run.
 
+The installer also:
+
+- Creates `/opt/ad-password-sentinel/.venv` and installs `requirements.txt`.
+- Configures log rotation for reports and logs.
+- Backs up Postfix files before relay changes and restores backups if setup fails.
+- Offers a post-install verification flow for config, LDAP bind, and test mail.
+
+## Windows Support
+
+Use `Notify-AdPasswordExpiry.ps1` when the environment has no Linux host. It uses the Windows ActiveDirectory module and SMTP settings from `config.windows.example.json`.
+
+Manual test:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Notify-AdPasswordExpiry.ps1 -ConfigPath .\config.windows.example.json -CheckConfig
+```
+
+Register a daily 08:00 scheduled task:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows_task.ps1 -ScriptPath C:\ADPasswordSentinel\Notify-AdPasswordExpiry.ps1 -ConfigPath C:\ADPasswordSentinel\config.json
+```
+
+The Windows path is best when the script runs on a domain-joined Windows Server with RSAT Active Directory tools installed.
+
+## Docker Support
+
+The Docker path is intended for Windows Server or Linux hosts that can run Linux containers and do not have a native Linux VM available.
+
+```bash
+cp config.env.example config.env
+docker compose up -d --build
+```
+
+The container runs cron at 08:00 daily and mounts:
+
+- `./config.env` to `/etc/ad-password-sentinel/config.env`
+- `./reports` to `/var/log/ad-password-sentinel`
+
 ## Production Safety Checklist
 
 1. Use a dedicated read-only AD bind account.
@@ -158,21 +199,18 @@ Cron entries use `flock` so a slow run does not overlap with the next scheduled 
 Status:
 
 - Phase 1 is implemented: shareable Python script, safe config template, Linux installer, cron prompt, docs, and tests.
-- Phase 2 is partially implemented: `gum`-aware installer prompts, LDAP/LDAPS TCP preflight, Postfix relay guidance, non-overlapping cron, `--check-config`, `--check-ldap`, and `--send-test-mail`.
-- Phase 3 is not complete: Windows/PowerShell and Docker-on-Windows support are planned.
+- Phase 2 is implemented: `gum`-aware installer prompts, LDAP/LDAPS TCP preflight, Postfix relay guidance with backup/rollback, non-overlapping cron, virtualenv install, log rotation, and runtime preflight commands.
+- Phase 3 is started: Windows PowerShell runner, Task Scheduler helper, Dockerfile, and docker-compose baseline are present.
 
 Phase 2:
 
-- Add a stronger post-install verification flow that runs config, LDAP, and mail checks together.
-- Add better Postfix backup/rollback handling before changing relay settings.
-- Add optional log rotation setup.
-- Add dependency installation into a dedicated virtual environment.
+- Remaining hardening: test on a real Linux server with Postfix and a real domain controller.
 
 Phase 3:
 
-- Add Windows support with a PowerShell implementation and Task Scheduler setup.
-- Evaluate a Windows Server Docker deployment path for environments without Linux infrastructure.
-- Document tradeoffs between native Windows mail relay configuration and containerized Linux mail transport.
+- Validate the PowerShell path on a domain-joined Windows Server.
+- Validate Docker networking and mail transport on Windows Server.
+- Decide whether Windows should become first-class production support or remain an alternate deployment path.
 
 ## License
 

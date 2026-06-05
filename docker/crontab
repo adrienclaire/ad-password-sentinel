@@ -1,0 +1,1 @@
+0 8 * * * root /usr/bin/flock -n /var/lock/ad-password-sentinel.lock /opt/ad-password-sentinel/.venv/bin/python /opt/ad-password-sentinel/notify_ad_password_expiry.py --config /etc/ad-password-sentinel/config.env >> /var/log/ad-password-sentinel/cron.log 2>&1

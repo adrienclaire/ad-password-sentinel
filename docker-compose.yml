@@ -1,0 +1,8 @@
+services:
+  ad-password-sentinel:
+    build: .
+    container_name: ad-password-sentinel
+    restart: unless-stopped
+    volumes:
+      - ./config.env:/etc/ad-password-sentinel/config.env:ro
+      - ./reports:/var/log/ad-password-sentinel

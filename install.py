@@ -3,6 +3,7 @@
 from getpass import getpass
 from pathlib import Path
 from urllib.parse import urlparse
+from datetime import datetime
 import os
 import shutil
 import socket
@@ -18,6 +19,8 @@ LOG_DIR = Path("/var/log/ad-password-sentinel")
 SCRIPT_NAME = "notify_ad_password_expiry.py"
 PROJECT_DIR = Path(__file__).resolve().parent
 LOCK_PATH = Path("/var/lock/ad-password-sentinel.lock")
+VENV_DIR = INSTALL_DIR / ".venv"
+LOGROTATE_PATH = Path("/etc/logrotate.d/ad-password-sentinel")
 
 
 def gum_available():
@@ -158,6 +161,18 @@ def run(command):
     subprocess.run(command, check=True)
 
 
+def build_venv_python_path():
+    return (VENV_DIR / "bin" / "python").as_posix()
+
+
+def install_python_dependencies():
+    requirements_path = PROJECT_DIR / "requirements.txt"
+
+    run([sys.executable, "-m", "venv", str(VENV_DIR)])
+    run([build_venv_python_path(), "-m", "pip", "install", "--upgrade", "pip"])
+    run([build_venv_python_path(), "-m", "pip", "install", "-r", str(requirements_path)])
+
+
 def detect_package_manager():
     for manager in ("apt-get", "dnf", "yum"):
         if command_exists(manager):
@@ -194,11 +209,11 @@ def cron_expression(choice):
     return schedules.get(choice, schedules["1"])
 
 
-def build_cron_command(expression):
+def build_cron_command(expression, python_path="/usr/bin/env python3"):
     script_path = (INSTALL_DIR / SCRIPT_NAME).as_posix()
     return (
         f"{expression} root /usr/bin/flock -n {LOCK_PATH.as_posix()} "
-        f"/usr/bin/env python3 {script_path} --config {CONFIG_PATH.as_posix()}"
+        f"{python_path} {script_path} --config {CONFIG_PATH.as_posix()}"
     )
 
 
@@ -241,6 +256,69 @@ def build_postfix_relay_commands(relay_host, relay_port, smtp_user="", smtp_pass
     return commands
 
 
+def build_postfix_backup_path(filename, timestamp):
+    return f"/etc/postfix/{filename}.ad-password-sentinel.{timestamp}.bak"
+
+
+def backup_postfix_file(filename, timestamp=None):
+    source = Path("/etc/postfix") / filename
+
+    if not source.exists():
+        return None
+
+    timestamp = timestamp or datetime.now().strftime("%Y%m%d-%H%M%S")
+    destination = Path(build_postfix_backup_path(filename, timestamp))
+    shutil.copy2(source, destination)
+    run(["chmod", "600", str(destination)])
+    return destination
+
+
+def restore_postfix_backup(backup_path, target_filename):
+    target = Path("/etc/postfix") / target_filename
+    shutil.copy2(backup_path, target)
+    run(["chmod", "644", str(target)])
+
+
+def build_logrotate_config():
+    return """\
+/var/log/ad-password-sentinel/*.csv /var/log/ad-password-sentinel/*.log {
+    monthly
+    rotate 12
+    missingok
+    notifempty
+    compress
+    copytruncate
+    create 0600 root root
+}
+"""
+
+
+def install_logrotate_config():
+    LOGROTATE_PATH.write_text(build_logrotate_config(), encoding="utf-8")
+    run(["chmod", "644", str(LOGROTATE_PATH)])
+
+
+def build_post_install_verification_commands(test_recipient):
+    python_path = build_venv_python_path()
+    script_path = (INSTALL_DIR / SCRIPT_NAME).as_posix()
+    config_path = CONFIG_PATH.as_posix()
+    return [
+        [python_path, script_path, "--config", config_path, "--check-config"],
+        [python_path, script_path, "--config", config_path, "--check-ldap"],
+        [python_path, script_path, "--config", config_path, "--send-test-mail", test_recipient],
+    ]
+
+
+def run_post_install_verification():
+    if not yes_no("Run config, LDAP, and test-mail verification now", True):
+        return
+
+    test_recipient = prompt("Test mail recipient", "it-support@example.com")
+
+    for command in build_post_install_verification_commands(test_recipient):
+        run(command)
+
+
 def configure_postfix_relay():
     relay_host = prompt("SMTP relay host", "smtp.example.com")
     relay_port = prompt("SMTP relay port", "587")
@@ -251,23 +329,36 @@ def configure_postfix_relay():
     if smtp_user:
         smtp_password = prompt("SMTP auth password", secret=True)
 
-    for command in build_postfix_relay_commands(relay_host, relay_port, smtp_user, smtp_password, use_tls):
-        run(command)
+    backups = []
 
-    if smtp_user:
-        sasl_path = Path("/etc/postfix/sasl_passwd")
-        fd = os.open(sasl_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        for filename in ("main.cf", "sasl_passwd"):
+            backup_path = backup_postfix_file(filename)
 
-        with os.fdopen(fd, "w", encoding="utf-8") as file:
-            file.write(f"[{relay_host}]:{relay_port} {smtp_user}:{smtp_password}\n")
+            if backup_path:
+                backups.append((backup_path, filename))
 
-        run(["chmod", "600", str(sasl_path)])
-        run(["postmap", str(sasl_path)])
+        for command in build_postfix_relay_commands(relay_host, relay_port, smtp_user, smtp_password, use_tls):
+            run(command)
 
-    if command_exists("systemctl"):
-        run(["systemctl", "restart", "postfix"])
-    else:
-        run(["service", "postfix", "restart"])
+        if smtp_user:
+            sasl_path = Path("/etc/postfix/sasl_passwd")
+            fd = os.open(sasl_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+
+            with os.fdopen(fd, "w", encoding="utf-8") as file:
+                file.write(f"[{relay_host}]:{relay_port} {smtp_user}:{smtp_password}\n")
+
+            run(["chmod", "600", str(sasl_path)])
+            run(["postmap", str(sasl_path)])
+
+        if command_exists("systemctl"):
+            run(["systemctl", "restart", "postfix"])
+        else:
+            run(["service", "postfix", "restart"])
+    except Exception:
+        for backup_path, filename in backups:
+            restore_postfix_backup(backup_path, filename)
+        raise
 
 
 def choose_ldap_settings():
@@ -340,6 +431,7 @@ def install_files():
     LOG_DIR.mkdir(parents=True, exist_ok=True)
 
     shutil.copy2(PROJECT_DIR / SCRIPT_NAME, INSTALL_DIR / SCRIPT_NAME)
+    shutil.copy2(PROJECT_DIR / "requirements.txt", INSTALL_DIR / "requirements.txt")
     (CONFIG_PATH).write_text(build_config(), encoding="utf-8")
 
     run(["chmod", "750", str(INSTALL_DIR)])
@@ -365,7 +457,7 @@ def configure_cron():
     )
     expression = cron_expression(choice)
 
-    command = build_cron_command(expression)
+    command = build_cron_command(expression, python_path=build_venv_python_path())
     cron_path = Path("/etc/cron.d/ad-password-sentinel")
     cron_path.write_text(command + "\n", encoding="utf-8")
     run(["chmod", "644", str(cron_path)])
@@ -402,14 +494,17 @@ def main():
         print("Postfix skipped. Keep TEST_MODE=true until mail transport is configured.")
 
     install_files()
+    install_python_dependencies()
+    install_logrotate_config()
     configure_cron()
+    run_post_install_verification()
 
     print("")
     print("Installed.")
     print(f"Edit config: {CONFIG_PATH}")
-    print(f"Run test: python3 {INSTALL_DIR / SCRIPT_NAME} --config {CONFIG_PATH}")
-    print(f"Check config: python3 {INSTALL_DIR / SCRIPT_NAME} --config {CONFIG_PATH} --check-config")
-    print(f"Check LDAP: python3 {INSTALL_DIR / SCRIPT_NAME} --config {CONFIG_PATH} --check-ldap")
+    print(f"Run test: {build_venv_python_path()} {INSTALL_DIR / SCRIPT_NAME} --config {CONFIG_PATH}")
+    print(f"Check config: {build_venv_python_path()} {INSTALL_DIR / SCRIPT_NAME} --config {CONFIG_PATH} --check-config")
+    print(f"Check LDAP: {build_venv_python_path()} {INSTALL_DIR / SCRIPT_NAME} --config {CONFIG_PATH} --check-ldap")
 
 
 if __name__ == "__main__":

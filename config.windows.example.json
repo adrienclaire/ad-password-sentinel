@@ -1,0 +1,14 @@
+{
+  "AdServer": "dc01.example.local",
+  "SearchBase": "DC=example,DC=local",
+  "BindUser": "svc_ad_password_sentinel@example.local",
+  "BindPassword": "change-me",
+  "WarningDays": 14,
+  "MailFrom": "noreply@example.com",
+  "TechReportTo": "it-support@example.com",
+  "SmtpServer": "smtp.example.com",
+  "SmtpPort": 25,
+  "TestMode": true,
+  "AlwaysSendReport": true,
+  "ReportDir": "C:\\ProgramData\\ADPasswordSentinel"
+}

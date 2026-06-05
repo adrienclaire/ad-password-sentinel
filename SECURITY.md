@@ -36,6 +36,14 @@ If the DC certificate is expired, trust-store installation is not enough. Replac
 
 Cron entries created by the installer use `flock` with `/var/lock/ad-password-sentinel.lock` to prevent overlapping runs. Keep this lock in place when editing cron manually.
 
+The Linux installer runs the application from `/opt/ad-password-sentinel/.venv` so dependency changes are isolated from the system Python installation.
+
+## Windows And Docker
+
+The Windows runner uses a JSON config file containing credentials. Store it under a restricted directory such as `C:\ADPasswordSentinel`, limit ACLs to administrators and the scheduled task identity, and avoid committing it to git.
+
+The Docker path expects `config.env` to be mounted read-only into the container. Treat host-mounted reports as sensitive because they include account metadata and password-expiration dates.
+
 ## Reporting Issues
 
 For now, report security issues privately to the repository owner. Do not publish credentials, real domain names, or production reports in issues or pull requests.
