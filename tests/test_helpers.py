@@ -38,6 +38,12 @@ class HelperTests(unittest.TestCase):
     def test_validate_ldap_security_allows_ldaps(self):
         validate_ldap_security({"AD_SERVER": "ldaps://dc01.example.local:636"})
 
+    def test_validate_ldap_security_allows_plain_ldap_when_explicit(self):
+        validate_ldap_security({
+            "AD_SERVER": "ldap://dc01.example.local:389",
+            "ALLOW_INSECURE_LDAP": "true",
+        })
+
     def test_validate_email_rejects_header_injection(self):
         with self.assertRaises(RuntimeError):
             validate_email("user@example.com\nBcc: attacker@example.com", "recipient")

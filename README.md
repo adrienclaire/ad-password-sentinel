@@ -34,10 +34,64 @@ Important defaults:
 
 - `TEST_MODE=true` prints emails instead of sending them.
 - `NOTIFY_USERS=false` sends only the IT report.
-- `AD_SERVER=ldaps://...` is recommended. Plain `ldap://` requires `ALLOW_INSECURE_LDAP=true` and should be limited to temporary testing.
+- `AD_SERVER=ldap://...` is a supported fallback for environments where the DC certificate is expired, untrusted, or cannot be replaced yet.
+- Set `ALLOW_INSECURE_LDAP=true` only after accepting that LDAP bind credentials and directory data are not protected by TLS.
+- `AD_SERVER=ldaps://...` is recommended when the DC certificate chain is valid and trusted by the Linux host or container.
 - `WARNING_DAYS=14` includes accounts expiring within 14 days.
 - `NOTIFY_DAYS=14,7,3,1,0` limits notifications to those exact day counts.
 - `USER_MAIL_ALLOWED_DOMAINS` can restrict end-user notifications to internal mail domains.
+
+## LDAP vs LDAPS
+
+Use LDAPS when possible:
+
+```text
+AD_SERVER=ldaps://dc01.example.local:636
+ALLOW_INSECURE_LDAP=false
+```
+
+If LDAPS fails because the domain controller certificate is expired, self-signed, or signed by a CA that the Linux host does not trust, you can run over LDAP explicitly:
+
+```text
+AD_SERVER=ldap://dc01.example.local:389
+ALLOW_INSECURE_LDAP=true
+```
+
+That fallback is useful for small or legacy environments where the AD CS CA role no longer exists. Keep it on a trusted internal network, use a least-privilege bind account, and avoid reusing that password elsewhere.
+
+## Trusting A DC Certificate For LDAPS
+
+If the DC has a certificate that is valid but not trusted by the Linux VM, export the issuing CA certificate or the DC certificate in PEM/CRT format and install it into the system trust store.
+
+Debian/Ubuntu:
+
+```bash
+sudo cp dc-or-ca.crt /usr/local/share/ca-certificates/ad-password-sentinel-dc.crt
+sudo update-ca-certificates
+```
+
+RHEL/CentOS/Rocky/Alma:
+
+```bash
+sudo cp dc-or-ca.crt /etc/pki/ca-trust/source/anchors/ad-password-sentinel-dc.crt
+sudo update-ca-trust extract
+```
+
+Then test LDAPS:
+
+```bash
+openssl s_client -connect dc01.example.local:636 -showcerts
+python3 notify_ad_password_expiry.py --config ./config.env
+```
+
+For Docker images based on Debian/Ubuntu, copy the certificate and refresh trust during build:
+
+```dockerfile
+COPY dc-or-ca.crt /usr/local/share/ca-certificates/ad-password-sentinel-dc.crt
+RUN update-ca-certificates
+```
+
+If the certificate is expired, importing it will not make LDAPS reliable. Use the LDAP fallback temporarily and plan a certificate replacement on the DC.
 
 ## Manual Run
 
@@ -93,6 +147,7 @@ Phase 2:
 
 - Improve the installer into a richer interactive shell experience, likely using `gum` when available with a plain shell fallback.
 - Add guided Postfix configuration for relay host, sender domain, authentication, and TLS.
+- Add guided LDAP/LDAPS setup, including certificate trust checks and an explicit LDAP fallback acknowledgement.
 - Add stronger validation for LDAP and mail configuration before cron is installed.
 
 Phase 3:

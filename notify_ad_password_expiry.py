@@ -90,8 +90,8 @@ def validate_ldap_security(config):
 
     if ad_server.lower().startswith("ldap://") and not allow_insecure:
         raise RuntimeError(
-            "AD_SERVER uses ldap://. Use ldaps:// or set ALLOW_INSECURE_LDAP=true "
-            "only for a temporary test environment."
+            "AD_SERVER uses ldap://. Use ldaps:// when the DC certificate is valid, "
+            "or set ALLOW_INSECURE_LDAP=true to explicitly accept the LDAP transport risk."
         )
 
 

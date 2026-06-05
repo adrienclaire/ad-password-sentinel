@@ -103,8 +103,8 @@ def build_config():
     print("Keep TEST_MODE=true until you validate LDAP search and mail delivery.")
 
     values = {
-        "AD_SERVER": prompt("AD LDAP server", "ldaps://dc01.example.local:636"),
-        "ALLOW_INSECURE_LDAP": "true" if yes_no("Allow insecure ldap:// without TLS", False) else "false",
+        "AD_SERVER": prompt("AD LDAP server", "ldap://dc01.example.local:389"),
+        "ALLOW_INSECURE_LDAP": "true" if yes_no("Allow ldap:// without TLS because LDAPS is unavailable", True) else "false",
         "AD_BASE_DN": prompt("AD base DN", "DC=example,DC=local"),
         "AD_BIND_USER": prompt("AD bind user", "svc_ad_password_sentinel@example.local"),
         "AD_BIND_PASSWORD": prompt("AD bind password", secret=True),
