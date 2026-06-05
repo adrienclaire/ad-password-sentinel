@@ -29,6 +29,57 @@ python3 -m venv .venv
 pip install -r requirements.txt
 ```
 
+## Installation
+
+Recommended approach: clone the repository, inspect the files, then run the installer. Do not pipe remote scripts directly into a root shell because the installer can write system files, configure cron, and optionally change Postfix.
+
+Linux:
+
+```bash
+git clone https://github.com/adrienclaire/ad-password-sentinel.git
+cd ad-password-sentinel
+sudo python3 install.py
+```
+
+If `git` is not installed, download a release archive or the repository ZIP from GitHub, extract it, inspect the files, then run:
+
+```bash
+cd ad-password-sentinel
+sudo python3 install.py
+```
+
+Optional `gum` prompts:
+
+```bash
+# Debian/Ubuntu example
+sudo mkdir -p /etc/apt/keyrings
+curl -fsSL https://repo.charm.sh/apt/gpg.key | sudo gpg --dearmor -o /etc/apt/keyrings/charm.gpg
+echo "deb [signed-by=/etc/apt/keyrings/charm.gpg] https://repo.charm.sh/apt/ * *" | sudo tee /etc/apt/sources.list.d/charm.list
+sudo apt update
+sudo apt install gum
+```
+
+`gum` is optional. If it is missing, the installer uses plain terminal prompts.
+
+Windows:
+
+```powershell
+git clone https://github.com/adrienclaire/ad-password-sentinel.git
+cd ad-password-sentinel
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\Install-Windows.ps1
+```
+
+Docker:
+
+```bash
+git clone https://github.com/adrienclaire/ad-password-sentinel.git
+cd ad-password-sentinel
+cp config.env.example config.env
+docker compose up -d --build
+```
+
+After installation, keep `TEST_MODE=true` until `--check-config`, `--check-ldap`, and a test email have been validated.
+
 ## Configuration
 
 Use `config.env.example` as the reference. Production `config.env` files are ignored by git and must not be committed.
