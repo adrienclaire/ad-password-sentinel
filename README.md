@@ -274,6 +274,21 @@ sudo -u ad-password-sentinel \
   /opt/ad-password-sentinel/.venv/bin/python \
   /opt/ad-password-sentinel/notify_ad_password_expiry.py \
   --config /etc/ad-password-sentinel/config.env check-ldap
+
+sudo -u ad-password-sentinel \
+  /opt/ad-password-sentinel/.venv/bin/python \
+  /opt/ad-password-sentinel/notify_ad_password_expiry.py \
+  --config /etc/ad-password-sentinel/config.env doctor
+```
+
+Send a live doctor test mail only when you explicitly want it:
+
+```bash
+sudo -u ad-password-sentinel \
+  /opt/ad-password-sentinel/.venv/bin/python \
+  /opt/ad-password-sentinel/notify_ad_password_expiry.py \
+  --config /etc/ad-password-sentinel/config.env \
+  doctor --send-test-mail it@example.com
 ```
 
 Docker:
@@ -331,14 +346,20 @@ Linux:
 
 Windows:
 
-1. Export required reports and back up `%ProgramData%\AD Password Sentinel`.
-2. Unregister the `AD Password Sentinel` scheduled task.
-3. Remove `%ProgramFiles%\AD Password Sentinel`.
-4. Remove `%ProgramData%\AD Password Sentinel` only after confirming that
-   reports and DPAPI-protected secrets are no longer needed.
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\Uninstall-Windows.ps1
+```
 
-Docker: remove the host schedule, run `docker compose down`, then archive or
-remove `.env`, `config/`, `secrets/`, `certs/`, and `reports/` deliberately.
+Docker:
+
+```bash
+./docker/uninstall.sh
+```
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\docker\uninstall.ps1
+```
 
 For recovery, disable the schedule first, restore configuration and secrets
 with their original permissions/ACLs, set `TEST_MODE=true`, and rerun config,

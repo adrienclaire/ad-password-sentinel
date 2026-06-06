@@ -345,10 +345,11 @@ def get_report_paths(config):
     return report_dir_path, report_csv_path
 
 
-def send_local_mail(config, to_addr, subject, body):
+def send_local_mail(config, to_addr, subject, body, attachments=None):
     config = normalize_config(config)
     mail_from = get_required(config, "MAIL_FROM")
     test_mode = parse_bool(config.get("TEST_MODE", "true"))
+    attachments = attachments or []
 
     if not to_addr:
         raise RuntimeError("Cannot send mail without a recipient")
@@ -374,6 +375,14 @@ def send_local_mail(config, to_addr, subject, body):
     message["Date"] = formatdate(localtime=True)
     message["Subject"] = subject
     message.set_content(body)
+    for attachment in attachments:
+        attachment_path = Path(attachment)
+        message.add_attachment(
+            attachment_path.read_bytes(),
+            maintype="text",
+            subtype="csv",
+            filename=attachment_path.name,
+        )
 
     if config["MAIL_TRANSPORT"] == "smtp":
         send_smtp_mail(config, message)
@@ -417,6 +426,33 @@ def send_smtp_mail(config, message):
             )
             client.login(config["SMTP_USER"], password)
         client.send_message(message)
+
+
+def check_mail_route(config):
+    config = normalize_config(config)
+
+    if config["MAIL_TRANSPORT"] == "sendmail":
+        validate_sendmail_path(config.get("SENDMAIL_PATH", DEFAULT_SENDMAIL_PATH))
+        return "sendmail"
+
+    host = get_required(config, "SMTP_HOST")
+    port = parse_int(config, "SMTP_PORT", 587, minimum=1)
+    security = config.get("SMTP_SECURITY", "starttls").lower()
+    context = ssl.create_default_context()
+    if security == "ssl":
+        client_context = smtplib.SMTP_SSL(host, port, timeout=30, context=context)
+    else:
+        client_context = smtplib.SMTP(host, port, timeout=30)
+
+    with client_context as client:
+        if security == "starttls":
+            client.starttls(context=context)
+        if config.get("SMTP_USER"):
+            password = get_config_secret(
+                config, "SMTP_PASSWORD_FILE", "SMTP_PASSWORD", "SMTP password"
+            )
+            client.login(config["SMTP_USER"], password)
+    return "smtp"
 
 
 def build_ldap_connection(config):
@@ -740,6 +776,14 @@ def parse_args(argv):
     check_mail_parser.add_argument(
         "--to", dest="mail_to", help="Recipient (defaults to TECH_REPORT_TO)"
     )
+    doctor_parser = add_command(
+        "doctor", "Run configuration, LDAP, mail-route, and schedule diagnostics"
+    )
+    doctor_parser.add_argument(
+        "--send-test-mail",
+        dest="doctor_mail_to",
+        help="Optional recipient for a live doctor test message",
+    )
     add_command("run", "Run the password expiration workflow")
 
     args = parser.parse_args(argv)
@@ -754,6 +798,8 @@ def parse_args(argv):
         args.command = "run"
     if not hasattr(args, "mail_to"):
         args.mail_to = None
+    if not hasattr(args, "doctor_mail_to"):
+        args.doctor_mail_to = None
     return args
 
 
@@ -767,6 +813,32 @@ def load_and_validate_config(config_path):
 def check_ldap(config):
     connection = build_ldap_connection(config)
     safe_ldap_unbind(connection)
+
+
+def run_doctor(config, send_test_mail_to=None):
+    report_dir, report_csv = get_report_paths(config)
+    report_dir.mkdir(parents=True, exist_ok=True)
+    check_ldap(config)
+    route = check_mail_route(config)
+    print("[OK] Configuration is valid.")
+    print(f"[OK] LDAP bind succeeded: {get_ldap_url(config)}")
+    print(f"[OK] Mail route check succeeded: {route}")
+    print(f"[OK] Report directory is ready: {report_dir}")
+    print(f"[OK] Report CSV target: {report_csv}")
+    if os.name != "nt":
+        cron_path = Path("/etc/cron.d/ad-password-sentinel")
+        if cron_path.exists():
+            print(f"[OK] Linux cron schedule found: {cron_path}")
+        else:
+            print(f"[WARN] Linux cron schedule not found: {cron_path}")
+    if send_test_mail_to:
+        send_local_mail(
+            config,
+            send_test_mail_to,
+            f"[{APP_NAME}] Doctor test email",
+            "AD Password Sentinel doctor test email.",
+        )
+        print(f"[OK] Doctor test email processed for {send_test_mail_to}.")
 
 
 def main(argv=None):
@@ -793,6 +865,10 @@ def main(argv=None):
         print(f"[OK] Test email processed for {recipient}.")
         return
 
+    if args.command == "doctor":
+        run_doctor(config, send_test_mail_to=args.doctor_mail_to)
+        return
+
     warning_days = parse_int(config, "WARNING_DAYS", 14, minimum=0)
     tech_report_to = get_required(config, "TECH_REPORT_TO")
     always_send_report = parse_bool(config.get("ALWAYS_SEND_REPORT", "true"))
@@ -810,7 +886,7 @@ def main(argv=None):
     if results or always_send_report:
         subject = f"[{APP_NAME}] Password expiration report - {len(results)} account(s)"
         body = build_tech_report_body(config, results, warning_days, report_csv)
-        send_local_mail(config, tech_report_to, subject, body)
+        send_local_mail(config, tech_report_to, subject, body, attachments=[report_csv])
     else:
         print("[INFO] No account found and ALWAYS_SEND_REPORT=false. No mail sent.")
 

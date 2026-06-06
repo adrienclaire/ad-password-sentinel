@@ -83,6 +83,15 @@ class DockerPhase3Tests(unittest.TestCase):
         self.assertIn('@("config", "secrets", "certs")', powershell_setup)
         self.assertIn('SYSTEM:(OI)(CI)(F)', powershell_setup)
 
+    def test_docker_uninstall_wrappers_exist_for_bash_and_powershell(self):
+        shell_uninstall = (self.root / "docker" / "uninstall.sh").read_text(encoding="utf-8")
+        powershell_uninstall = (self.root / "docker" / "uninstall.ps1").read_text(encoding="utf-8")
+
+        self.assertIn("docker compose down", shell_uninstall)
+        self.assertIn("Delete generated Docker config, secrets, certs, reports, and .env", shell_uninstall)
+        self.assertIn("docker compose down", powershell_uninstall)
+        self.assertIn("Delete generated Docker config, secrets, certs, reports, and .env", powershell_uninstall)
+
 
 if __name__ == "__main__":
     unittest.main()

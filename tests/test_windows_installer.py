@@ -42,6 +42,13 @@ class WindowsInstallerTests(unittest.TestCase):
         self.assertIn('@("check-mail", "--to", $ValidateSmtp)', source)
         self.assertIn("$env:ProgramData", source)
 
+    def test_windows_uninstaller_removes_task_and_optionally_programdata(self):
+        source = (ROOT / "scripts" / "Uninstall-Windows.ps1").read_text()
+
+        self.assertIn("Unregister-ScheduledTask", source)
+        self.assertIn("Remove-Item -LiteralPath $InstallDir -Recurse -Force", source)
+        self.assertIn("Remove configuration, secrets, and reports from ProgramData", source)
+
 
 if __name__ == "__main__":
     unittest.main()
