@@ -20,11 +20,27 @@ Prepare:
 - The domain controller FQDN and, preferably, its IP address as a fallback.
 - Network access to TCP 636 for LDAPS.
 - The issuing CA certificate when the DC certificate is not publicly trusted.
+- The CA certificate SHA-256 fingerprint before you launch the installer. The
+  installer can prompt for the CA file during LDAPS recovery, and it is easier
+  to complete that step if the fingerprint is already available.
 - A sender address, technical report recipient, and mail route.
 - Python 3.9 or newer. Docker deployments require Docker Compose.
 
 Keep `TEST_MODE=true` until configuration, LDAP, report contents, and mail
 delivery have been validated. Leave `NOTIFY_USERS=false` during validation.
+
+Find the CA certificate fingerprint before installation:
+
+```bash
+openssl x509 -in /path/to/domain-ca.cer -noout -fingerprint -sha256
+```
+
+To print only the normalized hex digest:
+
+```bash
+openssl x509 -in /path/to/domain-ca.cer -noout -fingerprint -sha256 \
+  | cut -d= -f2 | tr -d ':'
+```
 
 ## Linux: Clone And Run
 
@@ -120,25 +136,25 @@ installer, use the standard Linux CA store.
 Ubuntu and Debian:
 
 ```bash
-sudo cp /path/to/HOMELAB-CA.cer /usr/local/share/ca-certificates/HOMELAB-CA.crt
+sudo cp /path/to/domain-ca.cer /usr/local/share/ca-certificates/domain-ca.crt
 sudo update-ca-certificates
 ```
 
 RHEL, Rocky Linux, AlmaLinux, and compatible systems:
 
 ```bash
-sudo cp /path/to/HOMELAB-CA.cer /etc/pki/ca-trust/source/anchors/HOMELAB-CA.crt
+sudo cp /path/to/domain-ca.cer /etc/pki/ca-trust/source/anchors/domain-ca.crt
 sudo update-ca-trust extract
 ```
 
 After importing the CA, validate LDAPS directly before running the installer:
 
 ```bash
-getent hosts dc01.homelab.local
-openssl s_client -connect dc01.homelab.local:636 \
-  -servername dc01.homelab.local -brief </dev/null
-ldapwhoami -x -H ldaps://dc01.homelab.local:636 \
-  -D "svc_psw_notify@homelab.local" -W
+getent hosts dc01.domain.local
+openssl s_client -connect dc01.domain.local:636 \
+  -servername dc01.domain.local -brief </dev/null
+ldapwhoami -x -H ldaps://dc01.domain.local:636 \
+  -D "svc_psw_notify@domain.local" -W
 ```
 
 If those commands succeed and the installer still asks for a certificate, the
