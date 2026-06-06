@@ -92,6 +92,16 @@ class InstallCompatibilityTests(unittest.TestCase):
         self.assertIn('set_config_value LDAP_PORT 636', source)
         self.assertIn('set_config_value AD_SERVER "ldaps://$tls_name:636"', source)
 
+    def test_linux_uninstaller_confirms_and_optionally_removes_data(self):
+        source = (ROOT / "uninstall.sh").read_text(encoding="utf-8")
+
+        self.assertIn("Are you sure you want to uninstall", source)
+        self.assertIn("Also delete configuration, secrets, CA files, and reports", source)
+        self.assertIn('remove_path_if_present "$INSTALL_DIR"', source)
+        self.assertIn('remove_path_if_present "$CONFIG_DIR"', source)
+        self.assertIn('remove_path_if_present "$LOG_DIR"', source)
+        self.assertIn('run_root userdel "$SERVICE_USER"', source)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -52,6 +52,12 @@ cd ad-password-sentinel
 sudo ./install.sh
 ```
 
+To remove the Linux installation later:
+
+```bash
+sudo ./uninstall.sh
+```
+
 Do not pipe the installer from the network into a root shell. Review the
 checked-out script first because it installs files under `/opt` and `/etc`.
 
@@ -311,18 +317,17 @@ directories. Test the new image before the next scheduled live run.
 
 ## Uninstall And Recovery
 
-There is no automated uninstall command.
-
 Linux:
 
-1. Back up `/etc/ad-password-sentinel` and
-   `/var/log/ad-password-sentinel` if retention is required.
-2. Remove `/etc/cron.d/ad-password-sentinel`.
-3. Confirm no process is running.
-4. Remove `/opt/ad-password-sentinel`.
-5. Remove configuration, reports, the service account, and the imported CA
-   certificate only when policy permits.
-6. Run the platform CA trust refresh command after removing a certificate.
+1. Run `sudo ./uninstall.sh`.
+2. Confirm the uninstall prompt.
+3. Choose whether to keep or delete configuration, secrets, CA files, and
+   reports under `/etc` and `/var`.
+4. If you kept data for backup or migration, remove it later only when policy
+   permits.
+5. Run the platform CA trust refresh command only if you also removed a
+   certificate that had been imported into the system trust store outside this
+   application.
 
 Windows:
 
