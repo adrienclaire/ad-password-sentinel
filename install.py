@@ -24,6 +24,7 @@ VENV_DIR = INSTALL_DIR / ".venv"
 LOGROTATE_PATH = Path("/etc/logrotate.d/ad-password-sentinel")
 PROMPT_BACKEND = "plain"
 DIALOG_TIMEOUT_SECONDS = 120
+DRY_RUN = False
 
 
 def dialog_available():
@@ -70,7 +71,7 @@ def run_dialog(command, capture_output=False):
 def plain_prompt(label, default=None, secret=False):
     suffix = f" [{default}]" if default else ""
     question = f"{label}{suffix}: "
-    value = getpass(question) if secret else input(question)
+    value = getpass(question) if secret and not DRY_RUN else input(question)
     value = value.strip()
     return value if value else default
 
@@ -110,13 +111,18 @@ def parse_args(argv):
     parser.add_argument(
         "--ui",
         choices=("auto", "plain", "whiptail", "dialog"),
-        default="auto",
-        help="Prompt UI to use. Default: auto"
+        default="plain",
+        help="Prompt UI to use. Default: plain"
     )
     parser.add_argument(
         "--prompt-smoke-test",
         action="store_true",
         help="Exercise prompt rendering only; does not install or require root"
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Run the full installer questionnaire without writing system files"
     )
     return parser.parse_args(argv)
 
@@ -245,6 +251,10 @@ def command_exists(command):
 
 
 def run(command):
+    if DRY_RUN:
+        print(f"[DRY-RUN] Would run: {' '.join(command)}")
+        return
+
     subprocess.run(command, check=True)
 
 
@@ -253,6 +263,11 @@ def build_venv_python_path():
 
 
 def install_python_dependencies():
+    if DRY_RUN:
+        print(f"[DRY-RUN] Would create virtualenv: {VENV_DIR.as_posix()}")
+        print(f"[DRY-RUN] Would install Python dependencies from: {PROJECT_DIR / 'requirements.txt'}")
+        return
+
     requirements_path = PROJECT_DIR / "requirements.txt"
 
     run([sys.executable, "-m", "venv", str(VENV_DIR)])
@@ -302,17 +317,6 @@ def configure_prompt_backend(ui):
     if PROMPT_BACKEND != "plain":
         print(f"Using {PROMPT_BACKEND} installer UI.")
         return
-
-    if ui == "auto" and is_interactive and plain_yes_no("Install whiptail for blue-screen installer prompts", False):
-        if install_dialog_backend():
-            PROMPT_BACKEND = choose_prompt_backend(
-                requested_ui="auto",
-                has_whiptail=command_exists("whiptail"),
-                has_dialog=command_exists("dialog"),
-                is_interactive=is_interactive,
-            )
-            print(f"Using {PROMPT_BACKEND} installer UI.")
-            return
 
     if ui in ("whiptail", "dialog"):
         print(f"{ui} is unavailable. Using plain prompts.")
@@ -434,6 +438,10 @@ def build_logrotate_config():
 
 
 def install_logrotate_config():
+    if DRY_RUN:
+        print(f"[DRY-RUN] Would write logrotate config to: {LOGROTATE_PATH.as_posix()}")
+        return
+
     LOGROTATE_PATH.write_text(build_logrotate_config(), encoding="utf-8")
     run(["chmod", "644", str(LOGROTATE_PATH)])
 
@@ -450,6 +458,10 @@ def build_post_install_verification_commands(test_recipient):
 
 
 def run_post_install_verification():
+    if DRY_RUN:
+        print("[DRY-RUN] Would offer config, LDAP, and test-mail verification.")
+        return
+
     if not yes_no("Run config, LDAP, and test-mail verification now", True):
         return
 
@@ -524,7 +536,9 @@ def choose_ldap_settings():
 
     host, port = ldap_port_from_server(ad_server)
 
-    if can_connect(host, port):
+    if DRY_RUN:
+        print(f"[DRY-RUN] Would check LDAP TCP connectivity: {host}:{port}")
+    elif can_connect(host, port):
         print(f"LDAP TCP check succeeded: {host}:{port}")
     else:
         print(f"LDAP TCP check failed or timed out: {host}:{port}")
@@ -566,6 +580,12 @@ def build_config():
 
 
 def install_files():
+    if DRY_RUN:
+        print(f"[DRY-RUN] Would install application files to: {INSTALL_DIR.as_posix()}")
+        print(f"[DRY-RUN] Would write config to: {CONFIG_PATH.as_posix()}")
+        build_config()
+        return
+
     INSTALL_DIR.mkdir(parents=True, exist_ok=True)
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -585,7 +605,6 @@ def install_files():
 
 def configure_cron():
     print("")
-    print("Cron schedule")
     choice = choose(
         "Cron schedule",
         [
@@ -598,6 +617,11 @@ def configure_cron():
     expression = cron_expression(choice)
 
     command = build_cron_command(expression, python_path=build_venv_python_path())
+
+    if DRY_RUN:
+        print(f"[DRY-RUN] Would install cron entry: {command}")
+        return
+
     cron_path = Path("/etc/cron.d/ad-password-sentinel")
     cron_path.write_text(command + "\n", encoding="utf-8")
     run(["chmod", "644", str(cron_path)])
@@ -619,18 +643,25 @@ def prompt_smoke_test():
 
 
 def main(argv=None):
+    global DRY_RUN
+
     args = parse_args(argv or sys.argv[1:])
+    DRY_RUN = args.dry_run
     configure_prompt_backend(args.ui)
 
     if args.prompt_smoke_test:
         prompt_smoke_test()
         return
 
-    require_linux()
-    require_root()
+    if not DRY_RUN:
+        require_linux()
+        require_root()
 
     print(APP_NAME)
     print("Linux installer")
+
+    if DRY_RUN:
+        print("Dry-run mode: no system files will be changed.")
 
     mail_mode = choose(
         "Mail transport",
@@ -662,10 +693,10 @@ def main(argv=None):
 
     print("")
     print("Installed.")
-    print(f"Edit config: {CONFIG_PATH}")
-    print(f"Run test: {build_venv_python_path()} {INSTALL_DIR / SCRIPT_NAME} --config {CONFIG_PATH}")
-    print(f"Check config: {build_venv_python_path()} {INSTALL_DIR / SCRIPT_NAME} --config {CONFIG_PATH} --check-config")
-    print(f"Check LDAP: {build_venv_python_path()} {INSTALL_DIR / SCRIPT_NAME} --config {CONFIG_PATH} --check-ldap")
+    print(f"Edit config: {CONFIG_PATH.as_posix()}")
+    print(f"Run test: {build_venv_python_path()} {(INSTALL_DIR / SCRIPT_NAME).as_posix()} --config {CONFIG_PATH.as_posix()}")
+    print(f"Check config: {build_venv_python_path()} {(INSTALL_DIR / SCRIPT_NAME).as_posix()} --config {CONFIG_PATH.as_posix()} --check-config")
+    print(f"Check LDAP: {build_venv_python_path()} {(INSTALL_DIR / SCRIPT_NAME).as_posix()} --config {CONFIG_PATH.as_posix()} --check-ldap")
 
 
 if __name__ == "__main__":

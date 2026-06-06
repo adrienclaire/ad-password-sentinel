@@ -82,14 +82,19 @@ class InstallTests(unittest.TestCase):
         self.assertFalse(can_use_dialog_interactively(stdin_isatty=True, stdout_isatty=False, term="xterm-256color"))
         self.assertFalse(can_use_dialog_interactively(stdin_isatty=True, stdout_isatty=True, term="dumb"))
 
-    def test_parse_args_defaults_to_auto_ui(self):
+    def test_parse_args_defaults_to_plain_ui(self):
         args = parse_args([])
-        self.assertEqual(args.ui, "auto")
+        self.assertEqual(args.ui, "plain")
         self.assertFalse(args.prompt_smoke_test)
+        self.assertFalse(args.dry_run)
 
     def test_parse_args_supports_prompt_smoke_test(self):
         args = parse_args(["--prompt-smoke-test"])
         self.assertTrue(args.prompt_smoke_test)
+
+    def test_parse_args_supports_dry_run(self):
+        args = parse_args(["--dry-run"])
+        self.assertTrue(args.dry_run)
 
     def test_choose_prompt_backend_prefers_whiptail_in_auto_mode(self):
         backend = choose_prompt_backend(

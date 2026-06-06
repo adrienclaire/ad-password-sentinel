@@ -19,7 +19,7 @@ AD Password Sentinel notifies IT teams, and optionally users, before Active Dire
 - LDAP network access to a domain controller.
 - A least-privilege AD bind account.
 - Local `sendmail` interface, usually provided by Postfix, when `TEST_MODE=false`.
-- Optional: `whiptail` or `dialog` for blue-screen installer prompts. The default installer uses them automatically when available and falls back to plain numbered prompts.
+- Optional: `whiptail` or `dialog` for blue-screen installer prompts. The default installer uses plain numbered prompts for reliability.
 
 Install Python dependencies:
 
@@ -56,7 +56,7 @@ sudo apt update
 sudo apt install whiptail
 ```
 
-The installer defaults to `--ui auto`: it uses `whiptail` first, `dialog` second, and plain prompts if neither is available or the terminal is not suitable.
+The installer defaults to `--ui plain`. This is the recommended production path because it does not depend on terminal UI packages.
 
 Force plain prompts:
 
@@ -187,7 +187,7 @@ Run as root:
 python3 install.py
 ```
 
-The installer prompts for LDAP settings, mail settings, whether to notify users, and cron frequency. It uses `whiptail`/`dialog` when available and plain numbered prompts otherwise. The recommended schedule is every day at 08:00.
+The installer prompts for LDAP settings, mail settings, whether to notify users, and cron frequency. It uses plain numbered prompts by default. The recommended schedule is every day at 08:00.
 
 Prompt smoke test:
 
@@ -196,6 +196,14 @@ python3 install.py --prompt-smoke-test
 ```
 
 This checks prompt rendering without requiring root and without changing system files.
+
+Full installer dry-run:
+
+```bash
+python3 install.py --dry-run
+```
+
+This walks the complete installer questionnaire without writing to `/opt`, `/etc`, cron, Postfix, or logrotate.
 
 Cron choices:
 
