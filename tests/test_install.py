@@ -10,6 +10,7 @@ from install import (
     can_use_gum_interactively,
     cron_expression,
     ldap_port_from_server,
+    parse_args,
     should_use_gum,
 )
 
@@ -85,6 +86,15 @@ class InstallTests(unittest.TestCase):
         self.assertFalse(can_use_gum_interactively(stdin_isatty=False, stdout_isatty=True, term="xterm-256color"))
         self.assertFalse(can_use_gum_interactively(stdin_isatty=True, stdout_isatty=False, term="xterm-256color"))
         self.assertFalse(can_use_gum_interactively(stdin_isatty=True, stdout_isatty=True, term="dumb"))
+
+    def test_parse_args_defaults_to_plain_ui(self):
+        args = parse_args([])
+        self.assertEqual(args.ui, "plain")
+        self.assertFalse(args.prompt_smoke_test)
+
+    def test_parse_args_supports_prompt_smoke_test(self):
+        args = parse_args(["--prompt-smoke-test"])
+        self.assertTrue(args.prompt_smoke_test)
 
 
 if __name__ == "__main__":

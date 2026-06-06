@@ -19,7 +19,7 @@ AD Password Sentinel notifies IT teams, and optionally users, before Active Dire
 - LDAP network access to a domain controller.
 - A least-privilege AD bind account.
 - Local `sendmail` interface, usually provided by Postfix, when `TEST_MODE=false`.
-- Optional: `gum` for nicer installer prompts. The installer starts with plain prompts, asks before using `gum`, and can continue without it.
+- Optional: `gum` for nicer installer prompts when explicitly requested with `--ui gum`. The default installer uses plain numbered prompts.
 
 Install Python dependencies:
 
@@ -59,7 +59,13 @@ sudo apt update
 sudo apt install gum
 ```
 
-`gum` is optional. The installer asks before using it, and if it is missing it can offer to install it on supported Linux distributions. If a `gum` prompt cannot render correctly under `sudo`, the installer times out and falls back to plain prompts.
+`gum` is optional and not used by default. To request it explicitly:
+
+```bash
+sudo python3 install.py --ui gum
+```
+
+If a `gum` prompt cannot render correctly under `sudo`, the installer times out and falls back to plain prompts.
 
 Windows:
 
@@ -177,7 +183,15 @@ Run as root:
 python3 install.py
 ```
 
-The installer prompts for LDAP settings, mail settings, whether to notify users, and cron frequency. It starts with plain terminal prompts, then asks whether to use or install `gum` for richer prompts. If `gum` blocks or the terminal is not interactive, it falls back to plain prompts. The recommended schedule is every day at 08:00.
+The installer prompts for LDAP settings, mail settings, whether to notify users, and cron frequency. It uses plain numbered prompts by default. The recommended schedule is every day at 08:00.
+
+Prompt smoke test:
+
+```bash
+python3 install.py --prompt-smoke-test
+```
+
+This checks prompt rendering without requiring root and without changing system files.
 
 Cron choices:
 

@@ -4,6 +4,7 @@ from getpass import getpass
 from pathlib import Path
 from urllib.parse import urlparse
 from datetime import datetime
+import argparse
 import os
 import shutil
 import socket
@@ -87,6 +88,22 @@ def plain_choose(label, choices, default=None):
         return choices[index]
 
     return default or choices[0]
+
+
+def parse_args(argv):
+    parser = argparse.ArgumentParser(description=f"{APP_NAME} Linux installer")
+    parser.add_argument(
+        "--ui",
+        choices=("plain", "gum"),
+        default="plain",
+        help="Prompt UI to use. Default: plain"
+    )
+    parser.add_argument(
+        "--prompt-smoke-test",
+        action="store_true",
+        help="Exercise prompt rendering only; does not install or require root"
+    )
+    return parser.parse_args(argv)
 
 
 def gum_input(label, default=None, secret=False):
@@ -234,8 +251,12 @@ def install_gum():
     return command_exists("gum")
 
 
-def configure_prompt_backend():
+def configure_prompt_backend(ui):
     global USE_GUM
+
+    if ui == "plain":
+        USE_GUM = False
+        return
 
     if not can_use_gum_interactively(sys.stdin.isatty(), sys.stdout.isatty(), os.environ.get("TERM", "")):
         print("Interactive terminal not detected. Using plain prompts.")
@@ -243,17 +264,11 @@ def configure_prompt_backend():
         return
 
     if command_exists("gum"):
-        USE_GUM = should_use_gum(
-            gum_present=True,
-            user_requested=plain_yes_no("Use gum for richer installer prompts", False),
-        )
+        USE_GUM = should_use_gum(gum_present=True, user_requested=True)
         return
 
-    if plain_yes_no("gum is not installed. Install gum for richer prompts", False):
-        USE_GUM = install_gum()
-
-        if not USE_GUM:
-            print("gum is unavailable. Continuing with plain prompts.")
+    print("gum is not installed. Continuing with plain prompts.")
+    USE_GUM = False
 
 
 def install_postfix():
@@ -539,13 +554,33 @@ def configure_cron():
     print(f"Cron installed: {command}")
 
 
-def main():
+def prompt_smoke_test():
+    choice = choose(
+        "Mail transport",
+        [
+            "Use existing sendmail/Postfix",
+            "Install Postfix",
+            "Configure Postfix SMTP relay",
+            "Skip mail setup",
+        ],
+        "Use existing sendmail/Postfix",
+    )
+    print(f"Prompt smoke test selected: {choice}")
+
+
+def main(argv=None):
+    args = parse_args(argv or sys.argv[1:])
+    configure_prompt_backend(args.ui)
+
+    if args.prompt_smoke_test:
+        prompt_smoke_test()
+        return
+
     require_linux()
     require_root()
 
     print(APP_NAME)
     print("Linux installer")
-    configure_prompt_backend()
 
     mail_mode = choose(
         "Mail transport",
