@@ -1,49 +1,111 @@
 # Security
 
-## Supported Use
+## Security Model
 
-AD Password Sentinel handles directory credentials and employee account metadata. Run it on a trusted administrative host with least-privilege access to Active Directory.
+AD Password Sentinel is an administrative batch job, not an internet-facing
+service. Its security depends on a trusted host, a least-privilege AD account,
+protected configuration and reports, authenticated encrypted transports, and
+restricted scheduler identities.
 
-## Configuration Rules
+The application reads directory metadata needed to calculate password expiry.
+It does not need domain administrator rights or permission to change accounts.
+Use a dedicated read-only bind account and do not reuse its password.
 
-- Do not commit production `config.env` files.
-- Use a dedicated read-only AD service account.
-- Prefer LDAPS on port 636 with trusted certificates.
-- Plain LDAP is supported for environments where LDAPS is blocked by an expired, self-signed, or untrusted DC certificate. It requires `ALLOW_INSECURE_LDAP=true` so the risk is explicit.
-- When using plain LDAP, run only on a trusted internal network, use a low-privilege bind account, and rotate the bind password if the network or host is suspected to be compromised.
-- Keep `TEST_MODE=true` until LDAP search, mail routing, and report content are verified.
-- Restrict `/etc/ad-password-sentinel/config.env` permissions to root or the service account.
-- Restrict `/var/log/ad-password-sentinel` because reports can contain names, usernames, email addresses, and password expiration dates.
-- Set `USER_MAIL_ALLOWED_DOMAINS` before enabling end-user notifications.
+## Transport Security
 
-## Mail Safety
+LDAPS on TCP 636 with hostname and certificate validation is the default.
+Private AD certificate authorities must be trusted by the Linux host, Windows
+host, or explicitly supplied to the Docker runtime.
 
-The default runtime uses the local `sendmail` interface. Configure Postfix or another MTA before disabling test mode. Validate sender domains, relay permissions, and mail logs in a non-production run first.
+LDAP on TCP 389 is an explicit downgrade. It exposes bind credentials and
+directory traffic to interception or modification. The runtime rejects that
+mode unless `ALLOW_INSECURE_LDAP=true`; installers offer it only after LDAPS
+validation fails and default the answer to no.
 
-The installer can configure a basic Postfix SMTP relay. Review generated relay settings before using production credentials, and keep `/etc/postfix/sasl_passwd` mode `600` when SMTP auth is enabled.
+Use LDAP fallback only temporarily on a trusted, segmented network. Record the
+risk acceptance, rotate the bind password after suspected exposure, and restore
+LDAPS after repairing DNS, firewalls, or the DC certificate.
 
-## LDAPS Certificate Trust
+## Certificate Trust
 
-For LDAPS, the Linux VM or container must trust the certificate chain presented by the domain controller. If the DC certificate is valid but untrusted, install the issuing CA certificate or DC certificate into the host trust store:
+Prefer the issuing CA certificate over a server leaf certificate. Verify the
+certificate fingerprint, subject, issuer, validity period, hostname/SAN, and
+Server Authentication usage before importing it.
 
-- Debian/Ubuntu: copy the PEM/CRT file to `/usr/local/share/ca-certificates/` and run `update-ca-certificates`.
-- RHEL-compatible systems: copy it to `/etc/pki/ca-trust/source/anchors/` and run `update-ca-trust extract`.
-- Docker: copy the certificate into the image and run the trust update command during the build.
+- Linux installer: stores the trusted issuing CA in
+  `/etc/ad-password-sentinel/ldap-ca.crt` and references it with
+  `LDAP_CA_FILE`.
+- Docker: provide the CA to `docker/setup.sh` or `docker/setup.ps1`; it is
+  mounted read-only and selected through `LDAP_CA_FILE`.
 
-If the DC certificate is expired, trust-store installation is not enough. Replace the DC certificate when possible, or use the explicit LDAP fallback while accepting the transport risk.
+Do not disable certificate validation to work around an expired or
+hostname-mismatched certificate.
 
-## Scheduled Runs
+## Secrets
 
-Cron entries created by the installer use `flock` with `/var/lock/ad-password-sentinel.lock` to prevent overlapping runs. Keep this lock in place when editing cron manually.
+Never commit generated configuration, secret, certificate, or report files.
 
-The Linux installer runs the application from `/opt/ad-password-sentinel/.venv` so dependency changes are isolated from the system Python installation.
+Linux stores LDAP and optional SMTP passwords in separate mode-`0640` files
+under `/etc/ad-password-sentinel`. Restrict the directory to root and the
+`ad-password-sentinel` service account.
 
-## Windows And Docker
+Windows stores secrets with LocalMachine DPAPI under
+`%ProgramData%\AD Password Sentinel`. ACLs permit only `SYSTEM` and local
+Administrators. A copied DPAPI blob is not a substitute for access control and
+backups still require protection.
 
-The Windows runner supports `CredentialPath`, a DPAPI-protected credential exported with `Export-Clixml`. Prefer that over plaintext `BindPassword`. Store both JSON config and credential XML under a restricted directory such as `C:\ADPasswordSentinel`, limit ACLs to administrators and the scheduled task identity, and avoid committing them to git.
+Docker mounts configuration, secrets, and certificates read-only. The
+container runs as a non-root user with a read-only root filesystem, all
+capabilities dropped, and `no-new-privileges`. Protect the host-side files
+because Docker administrators and root can read mounted secrets.
 
-The Docker path expects `config.env` to be mounted read-only into the container. Treat host-mounted reports as sensitive because they include account metadata and password-expiration dates.
+## Test Mode And Mail Safety
 
-## Reporting Issues
+Keep `TEST_MODE=true` until all of the following are verified:
 
-For now, report security issues privately to the repository owner. Do not publish credentials, real domain names, or production reports in issues or pull requests.
+1. Configuration validation succeeds.
+2. The authenticated LDAP bind succeeds.
+3. The generated account list and CSV are correct.
+4. A test message reaches the technical recipient.
+5. Sender identity, SMTP relay policy, and user mail domains are correct.
+
+Keep `NOTIFY_USERS=false` until the IT report has been reviewed. Set
+`USER_MAIL_ALLOWED_DOMAINS` before enabling user messages.
+
+Direct SMTP supports `starttls`, `ssl`/TLS, or `none`; prefer encrypted modes.
+An existing local `sendmail` interface is also supported on Linux. Avoid
+unauthenticated, unencrypted SMTP outside a controlled relay network.
+
+## Reports And Logs
+
+Reports can contain names, usernames, email addresses, and password-expiration
+dates. Restrict access, define retention, protect backups, and avoid attaching
+production reports to public issues.
+
+Schedules prevent overlapping runs: Linux uses `flock`; Windows Task Scheduler
+uses `IgnoreNew`. Preserve those controls when changing schedules manually.
+
+## Network Boundaries
+
+Allow only required flows:
+
+- Application host or container to domain controllers on TCP 636.
+- TCP 389 only during an explicitly accepted LDAP fallback.
+- Application host or container to the chosen SMTP relay port.
+- DNS to the organization-approved resolvers.
+
+Apply host, network, DC, Docker, and cloud firewalls consistently. Do not expose
+LDAP, SMTP, reports, or secret files to untrusted networks.
+
+## Updates And Recovery
+
+Back up configuration, secrets, reports, and scheduler definitions before an
+upgrade. Disable the schedule during recovery, restore restrictive
+permissions/ACLs, set `TEST_MODE=true`, and repeat config, LDAP, mail, and
+report validation before enabling live notifications.
+
+## Reporting Security Issues
+
+Report vulnerabilities privately to the repository owner. Do not include real
+credentials, domain names, certificates, directory exports, or reports in a
+public issue.

@@ -8,6 +8,7 @@ env/
 # Local secrets and generated output
 config.env
 config.windows.json
+secrets.env
 bind-credential.xml
 *.env.local
 config.local.env

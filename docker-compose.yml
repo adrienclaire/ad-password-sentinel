@@ -1,10 +1,24 @@
 services:
   ad-password-sentinel:
     build: .
-    container_name: ad-password-sentinel
-    restart: unless-stopped
+    image: ad-password-sentinel:local
+    user: "${CONTAINER_UID:-10001}:${CONTAINER_GID:-10001}"
+    read_only: true
+    restart: "no"
+    init: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      TZ: ${TZ:-Etc/UTC}
+    extra_hosts:
+      - "${LDAP_HOST:-dc.invalid}:${LDAP_IP:-127.0.0.1}"
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,mode=700,uid=${CONTAINER_UID:-10001},gid=${CONTAINER_GID:-10001}
     volumes:
-      - ./config.env:/etc/ad-password-sentinel/config.env:ro
-      - ./reports:/var/log/ad-password-sentinel
-      # Optional for LDAPS when the DC/CA certificate is valid but not trusted:
-      # - ./certs/dc-or-ca.crt:/usr/local/share/ca-certificates/ad-password-sentinel-dc.crt:ro
+      - ${HOST_CONFIG_FILE:-./config/config.env}:/etc/ad-password-sentinel/config.env:ro
+      - ${HOST_LDAP_SECRET_FILE:-./secrets/ldap-password}:/run/secrets/ldap-password:ro
+      - ${HOST_SMTP_SECRET_FILE:-./secrets/smtp-password}:/run/secrets/smtp-password:ro
+      - ${HOST_CA_FILE:-./certs/ca.crt}:/run/certs/ad-password-sentinel-ca.crt:ro
+      - ${HOST_REPORTS_DIR:-./reports}:/var/log/ad-password-sentinel:rw

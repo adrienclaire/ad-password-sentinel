@@ -1,59 +1,153 @@
-# Phase 3: Windows And Docker
+# Windows And Docker Deployment
 
-Phase 3 provides two alternatives for environments without a Linux server.
+The Windows and Docker paths use the same Python engine as native Linux. They
+are alternatives for environments where a Linux service host is unavailable or
+where the organization standardizes on Windows Task Scheduler or containers.
 
-## Option A: Native Windows
+## Native Windows
 
-Use the PowerShell runner when you have a domain-joined Windows Server with RSAT Active Directory tools installed.
+### Requirements
 
-Files:
+- 64-bit Windows with an elevated Windows PowerShell console.
+- Python 3 available as `python.exe`.
+- DNS or a known DC IP route to Active Directory.
+- TCP 636 to the DC and access to a direct SMTP relay.
 
-- `Notify-AdPasswordExpiry.ps1`
-- `config.windows.example.json`
-- `scripts/New-WindowsCredential.ps1`
-- `scripts/Install-Windows.ps1`
-- `scripts/windows_task.ps1`
+### Install
 
-Recommended flow:
-
-1. Copy the files to `C:\ADPasswordSentinel`.
-2. Create `C:\ADPasswordSentinel\config.json` from `config.windows.example.json`.
-3. Create `C:\ADPasswordSentinel\bind-credential.xml` with `scripts/New-WindowsCredential.ps1`.
-4. Restrict ACLs on the config and credential files.
-5. Run `-CheckConfig`.
-6. Run `-CheckLdap`.
-7. Run `-SendTestMail`.
-8. Register the scheduled task.
-
-Native Windows avoids Linux mail transport complexity, but it depends on the ActiveDirectory PowerShell module and local SMTP relay access.
-
-The credential XML is protected by Windows DPAPI. It should be created by the same account context that will run the scheduled task.
-
-## Option B: Docker
-
-Use Docker when the organization can run Linux containers but does not want to maintain a Linux VM.
-
-Files:
-
-- `Dockerfile`
-- `docker-compose.yml`
-- `docker/crontab`
-- `docker/entrypoint.sh`
-
-Recommended flow:
-
-1. Copy `config.env.example` to `config.env`.
-2. Keep `TEST_MODE=true`.
-3. Run `docker compose up -d --build`.
-4. Inspect `./reports/cron.log`.
-5. Run a manual container command for `--check-ldap` if network access is uncertain.
-
-For LDAPS trust issues, mount a valid DC or CA certificate:
-
-```yaml
-- ./certs/dc-or-ca.crt:/usr/local/share/ca-certificates/ad-password-sentinel-dc.crt:ro
+```powershell
+git clone https://github.com/adrienclaire/ad-password-sentinel.git
+Set-Location .\ad-password-sentinel
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\Install-Windows.ps1
 ```
 
-The entrypoint refreshes the container CA store when that certificate is present.
+Application files are installed under `%ProgramFiles%\AD Password Sentinel`.
+Configuration, machine-DPAPI secrets, and reports are stored under
+`%ProgramData%\AD Password Sentinel` with ACLs restricted to `SYSTEM` and local
+Administrators.
 
-Docker keeps the Python/Linux runtime consistent, but mail relay and domain-controller network access must be configured from the container network.
+The installer attempts LDAPS on 636 first. If the DC FQDN is unreachable and
+the optional IP fallback reaches port 636, it uses that IP for connectivity;
+certificate hostname validation can still fail. Only after authenticated LDAPS
+validation fails does the installer offer unencrypted LDAP on port 389, and it
+requires explicit acceptance.
+
+The installer validates configuration, LDAP, direct SMTP, and the SYSTEM task
+identity. The default task time is daily at 08:00. `TEST_MODE=true` remains in
+place unless the final live-notification prompt is accepted.
+
+### Operations
+
+Manual checks:
+
+```powershell
+& "$env:ProgramFiles\AD Password Sentinel\Notify-AdPasswordExpiry.ps1" `
+  -CheckConfig
+
+& "$env:ProgramFiles\AD Password Sentinel\Notify-AdPasswordExpiry.ps1" `
+  -CheckLdap
+
+& "$env:ProgramFiles\AD Password Sentinel\Notify-AdPasswordExpiry.ps1" `
+  -SendTestMail it@example.com
+```
+
+Before upgrades, export reports and back up `%ProgramData%\AD Password
+Sentinel`. Rerun the elevated installer from the updated source. For recovery,
+disable the scheduled task, restore files and ACLs, set `TEST_MODE=true`, and
+repeat all checks.
+
+To uninstall, unregister the `AD Password Sentinel` task, then remove the
+Program Files directory. Remove ProgramData only after confirming that reports
+and machine-protected secrets are no longer required.
+
+## Docker
+
+### Architecture
+
+The image is a non-root, read-only, one-shot job. Docker Compose mounts:
+
+- `config/config.env` read-only.
+- LDAP and SMTP secret files read-only.
+- `certs/ca.crt` read-only.
+- `reports/` writable.
+
+Compose also maps the DC FQDN to the supplied DC IP inside the container,
+providing a deterministic fallback when container DNS cannot resolve AD.
+
+### Bash Setup
+
+```bash
+git clone https://github.com/adrienclaire/ad-password-sentinel.git
+cd ad-password-sentinel
+./docker/setup.sh
+```
+
+### PowerShell Setup
+
+```powershell
+git clone https://github.com/adrienclaire/ad-password-sentinel.git
+Set-Location .\ad-password-sentinel
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\docker\setup.ps1
+```
+
+Both scripts collect LDAPS and direct SMTP settings, generate protected
+host-side files, build the image, validate configuration, and perform an LDAP
+bind. They leave `TEST_MODE=true`.
+
+For private PKI, supply the issuing CA certificate when prompted. It is mounted
+at `/run/certs/ad-password-sentinel-ca.crt` and configured through
+`LDAP_CA_FILE`. An empty placeholder is mounted when no custom CA is needed.
+
+### Validate And Schedule
+
+```bash
+docker compose run --rm ad-password-sentinel validate
+docker compose run --rm ad-password-sentinel check-ldap
+docker compose run --rm ad-password-sentinel check-mail --to it@example.com
+docker compose run --rm ad-password-sentinel run
+```
+
+Review the generated report before changing `TEST_MODE=false`. Schedule the
+one-shot command on the host, preferably daily at 08:00:
+
+```cron
+0 8 * * * /usr/bin/docker run --rm --read-only ... ad-password-sentinel:local run
+```
+
+The PowerShell setup script can print a matching Windows `schtasks` command.
+
+Docker image build and live AD/SMTP validation are environment-dependent. They
+require a working Docker engine, suitable CPU/image support, DNS/routing,
+firewall access, a valid certificate chain, correct credentials, and an SMTP
+relay that accepts the container's traffic.
+
+### Upgrade And Recovery
+
+Preserve `.env`, `config/`, `secrets/`, `certs/`, and `reports/`, then:
+
+```bash
+git pull --ff-only
+docker compose build --pull
+docker compose run --rm ad-password-sentinel validate
+docker compose run --rm ad-password-sentinel check-ldap
+```
+
+For recovery, disable the host schedule, restore the mounted files with
+restrictive permissions, set `TEST_MODE=true`, and validate LDAP, mail, and
+reports before resuming.
+
+For uninstall, remove the host scheduler entry and run `docker compose down`.
+Archive or delete generated host files according to secret and report retention
+policy.
+
+## Network Troubleshooting
+
+Test TCP 636 first. Check DNS, routing, host firewalls, container firewall
+rules, cloud security groups, and DC firewalls. Inspect the DC certificate for
+expiry, hostname/SAN mismatch, missing Server Authentication usage, and an
+untrusted issuer.
+
+Port 389 is only for the explicit unencrypted LDAP fallback. An open port does
+not remove the confidentiality risk. SMTP must also be reachable on the
+configured port, commonly 587 for STARTTLS or 465 for implicit TLS.

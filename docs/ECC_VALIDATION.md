@@ -1,32 +1,47 @@
-# ECC Validation
+# Validation Status
 
-## Stack
+## Automated And Repository-Level Validation
 
-- Language: Python.
-- Runtime: Linux cron for production execution.
-- External dependency: `ldap3`.
-- Sensitive surfaces: Active Directory bind credentials, LDAP transport security, local `sendmail`, cron execution, and CSV reports containing employee account metadata.
+The repository contains automated coverage for the shared Python runtime,
+native Linux installer flow, installer UI fallback, Windows installer helpers,
+Docker configuration, and runtime command routing.
 
-## Daily Surface
+Documentation and configuration examples must continue to preserve these
+invariants:
 
-- Python scripting practices: active because the repo contains `notify_ad_password_expiry.py`, `install.py`, and `tests/test_helpers.py`.
-- Security review: active because the script handles credentials, sends email, writes PII reports, and is scheduled from cron.
-- Verification before completion: active because changes should be proven with syntax checks and unit tests before commit or release.
+- LDAPS on TCP 636 is the default.
+- LDAP on TCP 389 requires `ALLOW_INSECURE_LDAP=true`.
+- `TEST_MODE=true` is the initial state.
+- Secrets are stored separately from normal configuration.
+- User notifications are disabled by default.
+- Daily 08:00 is the recommended schedule.
 
-## Library Surface
+## Environment-Dependent Validation
 
-- Frontend, TypeScript, React, Supabase, API design, and database skills are library-only for this repo. There is no evidence of those stacks in tracked files.
-- Windows and Docker guidance are library-only until Phase 3 starts.
-- Product/UI skills become relevant only if Phase 2 adopts a richer terminal UI such as `gum`.
+The following cannot be established by repository tests alone:
 
-## Install Plan
+- Building the Docker image on every target engine and architecture.
+- Authenticating against a live Active Directory domain.
+- Verifying a production DC certificate chain.
+- Confirming host, VLAN, VPN, cloud, and DC firewall policy for ports 636/389.
+- Delivering through a live SMTP relay and confirming downstream receipt.
+- Running the Windows SYSTEM task with the target organization's endpoint
+  security and Group Policy.
 
-- Keep the repo lightweight. Do not install full ECC hooks or rules that do not match this Python script.
-- Add Python-focused verification when the repo grows: formatting, linting, dependency auditing, and CI.
-- Keep production `config.env` files out of git. Ship only `config.env.example`.
+Treat Docker image build and live AD/SMTP checks as environment-dependent
+validation. Perform them in the target environment with `TEST_MODE=true`.
 
-## Verification
+## Release Validation Checklist
 
-- `rg --files` confirmed a Python-only repository.
-- `git ls-files` confirmed `config.env` is not tracked.
-- Security scan focused on `AD_BIND_PASSWORD`, LDAP transport, `sendmail`, cron, report paths, and generated CSV output.
+1. Run repository tests and shell/PowerShell syntax checks.
+2. Exercise `sudo ./install.sh --dry-run` with Whiptail and plain prompts.
+3. Validate DNS and the optional DC IP fallback.
+4. Validate an authenticated LDAPS bind on port 636.
+5. Validate private CA import or Docker CA mounting where applicable.
+6. Confirm LDAP downgrade is declined by default and clearly warns about port
+   389.
+7. Validate SMTP or sendmail with a controlled technical recipient.
+8. Inspect CSV and email content while `TEST_MODE=true`.
+9. Confirm scheduler identity, permissions, non-overlap behavior, and the daily
+   08:00 recommendation.
+10. Enable live mode only after target-environment approval.

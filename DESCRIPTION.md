@@ -1,5 +1,9 @@
 # AD Password Sentinel
 
-AD Password Sentinel is a small Linux-friendly notification runner for Active Directory password expiration. It scans enabled AD user accounts, writes a CSV report, sends an IT summary, and can optionally notify end users before their password expires.
+AD Password Sentinel is a scheduled Active Directory password-expiration
+notification service. It uses LDAPS by default, produces an auditable CSV and
+IT report, and can send controlled end-user reminders.
 
-The project is designed for scheduled execution from cron. The recommended schedule is every day at 08:00 so users and support teams receive warnings early in the business day.
+Deploy it with the native Linux installer, the elevated Windows PowerShell
+installer, or the hardened one-shot Docker runtime. All paths begin in
+`TEST_MODE=true`, support direct SMTP, and recommend daily execution at 08:00.

@@ -1,1 +1,5 @@
-0 8 * * * root /usr/bin/flock -n /var/lock/ad-password-sentinel.lock /opt/ad-password-sentinel/.venv/bin/python /opt/ad-password-sentinel/notify_ad_password_expiry.py --config /etc/ad-password-sentinel/config.env >> /var/log/ad-password-sentinel/cron.log 2>&1
+# Deprecated on purpose.
+# Do not schedule Docker runs from a mutable source checkout.
+# Use `docker/setup.sh` or `docker/setup.ps1` to validate the image and then
+# install a host scheduler command that runs `docker run ... ad-password-sentinel:local run`
+# against root-owned or administrator-owned config and secret paths.

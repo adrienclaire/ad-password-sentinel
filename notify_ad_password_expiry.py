@@ -5,12 +5,15 @@ from email.message import EmailMessage
 from email.utils import formatdate
 from pathlib import Path
 import argparse
+import smtplib
 import os
 import re
+import ssl
 import stat
 import subprocess
 import sys
 import csv
+from urllib.parse import urlsplit
 
 
 APP_NAME = "AD Password Sentinel"
@@ -18,6 +21,7 @@ DEFAULT_CONFIG_PATH = "/etc/ad-password-sentinel/config.env"
 DEFAULT_REPORT_DIR = "/var/log/ad-password-sentinel"
 DEFAULT_REPORT_CSV = "ad-password-expiry-report.csv"
 DEFAULT_SENDMAIL_PATH = "/usr/sbin/sendmail"
+DEFAULT_LDAP_PORTS = {"ldap": 389, "ldaps": 636}
 
 NEVER_EXPIRES_FILETIME = 9223372036854775807
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -77,22 +81,115 @@ def validate_config_file_permissions(path):
 
     mode = stat.S_IMODE(config_path.stat().st_mode)
 
-    if mode & (stat.S_IRWXG | stat.S_IRWXO):
+    disallowed = stat.S_IWGRP | stat.S_IXGRP | stat.S_IRWXO
+    if mode & disallowed:
         raise RuntimeError(
             f"Config file permissions are too open: {config_path}. "
-            "Use chmod 600 because it contains credentials."
+            "Use chmod 640 or chmod 600."
         )
+
+
+def normalize_config(config):
+    normalized = dict(config)
+    legacy_server = normalized.get("AD_SERVER", "")
+
+    if legacy_server and not normalized.get("LDAP_HOST"):
+        parsed = urlsplit(
+            legacy_server if "://" in legacy_server else f"ldaps://{legacy_server}"
+        )
+        normalized["LDAP_MODE"] = normalized.get("LDAP_MODE") or parsed.scheme.lower()
+        normalized["LDAP_HOST"] = parsed.hostname or ""
+        if parsed.port is not None:
+            normalized["LDAP_PORT"] = str(parsed.port)
+
+    aliases = {
+        "LDAP_BASE_DN": "AD_BASE_DN",
+        "LDAP_BIND_USER": "AD_BIND_USER",
+    }
+    for canonical, legacy in aliases.items():
+        if not normalized.get(canonical) and normalized.get(legacy):
+            normalized[canonical] = normalized[legacy]
+
+    mode = normalized.get("LDAP_MODE", "ldaps").strip().lower()
+    normalized["LDAP_MODE"] = mode
+    normalized.setdefault("LDAP_PORT", str(DEFAULT_LDAP_PORTS.get(mode, 636)))
+    normalized.setdefault("LDAP_TLS_VALIDATE", "true")
+    normalized.setdefault("TEST_MODE", "true")
+
+    if not normalized.get("SMTP_HOST") and normalized.get("SMTP_SERVER"):
+        normalized["SMTP_HOST"] = normalized["SMTP_SERVER"]
+    if not normalized.get("MAIL_TRANSPORT"):
+        normalized["MAIL_TRANSPORT"] = (
+            "smtp" if normalized.get("SMTP_HOST") else "sendmail"
+        )
+    normalized["MAIL_TRANSPORT"] = normalized["MAIL_TRANSPORT"].strip().lower()
+    normalized.setdefault("SMTP_SECURITY", "starttls")
+    return normalized
+
+
+def get_ldap_url(config):
+    normalized = normalize_config(config)
+    host = get_required(normalized, "LDAP_HOST")
+    port = parse_int(
+        normalized,
+        "LDAP_PORT",
+        DEFAULT_LDAP_PORTS.get(normalized["LDAP_MODE"], 636),
+        minimum=1,
+    )
+    return f"{normalized['LDAP_MODE']}://{host}:{port}"
+
+
+def load_secret(path, label):
+    secret_path = Path(path)
+    if not secret_path.is_absolute():
+        raise RuntimeError(f"{label} file path must be absolute")
+    if not secret_path.is_file():
+        raise RuntimeError(f"{label} file does not exist: {secret_path}")
+    if os.name != "nt":
+        mode = stat.S_IMODE(secret_path.stat().st_mode)
+        disallowed = stat.S_IWGRP | stat.S_IXGRP | stat.S_IRWXO
+        if mode & disallowed:
+            raise RuntimeError(f"{label} file permissions are too open: {secret_path}")
+    value = secret_path.read_text(encoding="utf-8").rstrip("\r\n")
+    if not value:
+        raise RuntimeError(f"{label} file is empty: {secret_path}")
+    return value
+
+
+def get_config_secret(config, file_key, legacy_key, label):
+    if config.get(file_key):
+        return load_secret(config[file_key], label)
+    if config.get(legacy_key):
+        if not parse_bool(config.get("TEST_MODE", "true")):
+            raise RuntimeError(
+                f"{file_key} is required in production; {legacy_key} is accepted only "
+                "while TEST_MODE=true"
+            )
+        return config[legacy_key]
+    raise RuntimeError(f"Missing required config value: {file_key}")
 
 
 def validate_ldap_security(config):
-    ad_server = get_required(config, "AD_SERVER")
-    allow_insecure = parse_bool(config.get("ALLOW_INSECURE_LDAP", "false"))
+    normalized = normalize_config(config)
+    mode = normalized["LDAP_MODE"]
+    if mode not in DEFAULT_LDAP_PORTS:
+        raise RuntimeError("LDAP_MODE must be 'ldaps' or 'ldap'")
 
-    if ad_server.lower().startswith("ldap://") and not allow_insecure:
+    allow_insecure = parse_bool_config(
+        normalized, "ALLOW_INSECURE_LDAP", default=False
+    )
+    tls_validate = parse_bool_config(normalized, "LDAP_TLS_VALIDATE", default=True)
+    if mode == "ldap" and not allow_insecure:
         raise RuntimeError(
-            "AD_SERVER uses ldap://. Use ldaps:// when the DC certificate is valid, "
-            "or set ALLOW_INSECURE_LDAP=true to explicitly accept the LDAP transport risk."
+            "LDAP_MODE=ldap is an insecure fallback. Set ALLOW_INSECURE_LDAP=true "
+            "to explicitly accept the LDAP transport risk."
         )
+    if mode == "ldaps" and not tls_validate and not allow_insecure:
+        raise RuntimeError(
+            "LDAP_TLS_VALIDATE=false requires ALLOW_INSECURE_LDAP=true"
+        )
+    if normalized.get("LDAP_CA_FILE") and not Path(normalized["LDAP_CA_FILE"]).is_file():
+        raise RuntimeError(f"LDAP_CA_FILE does not exist: {normalized['LDAP_CA_FILE']}")
 
 
 def validate_sendmail_path(sendmail_path):
@@ -109,23 +206,63 @@ def validate_sendmail_path(sendmail_path):
 
 
 def validate_mail_config(config):
-    validate_email(get_required(config, "MAIL_FROM"), "MAIL_FROM")
-    validate_email(get_required(config, "TECH_REPORT_TO"), "TECH_REPORT_TO")
+    normalized = normalize_config(config)
+    validate_email(get_required(normalized, "MAIL_FROM"), "MAIL_FROM")
+    validate_email(get_required(normalized, "TECH_REPORT_TO"), "TECH_REPORT_TO")
     validate_no_header_control_chars(
-        config.get("USER_MAIL_SUBJECT", "Your password will expire soon"),
+        normalized.get("USER_MAIL_SUBJECT", "Your password will expire soon"),
         "USER_MAIL_SUBJECT"
     )
-    validate_sendmail_path(config.get("SENDMAIL_PATH", DEFAULT_SENDMAIL_PATH))
+    transport = normalized["MAIL_TRANSPORT"]
+    if transport == "sendmail":
+        validate_sendmail_path(normalized.get("SENDMAIL_PATH", DEFAULT_SENDMAIL_PATH))
+    elif transport == "smtp":
+        get_required(normalized, "SMTP_HOST")
+        parse_int(normalized, "SMTP_PORT", 587, minimum=1)
+        security = normalized.get("SMTP_SECURITY", "starttls").lower()
+        if security not in ("none", "starttls", "ssl"):
+            raise RuntimeError("SMTP_SECURITY must be 'none', 'starttls', or 'ssl'")
+        if normalized.get("SMTP_USER"):
+            if security == "none":
+                raise RuntimeError(
+                    "SMTP authentication requires SMTP_SECURITY=starttls or ssl"
+                )
+            get_config_secret(
+                normalized, "SMTP_PASSWORD_FILE", "SMTP_PASSWORD", "SMTP password"
+            )
+    else:
+        raise RuntimeError("MAIL_TRANSPORT must be 'smtp' or 'sendmail'")
 
 
 def validate_config(config, config_path):
     validate_config_file_permissions(config_path)
-    validate_ldap_security(config)
-    validate_mail_config(config)
+    normalized = normalize_config(config)
+    parse_bool_config(normalized, "TEST_MODE", default=True)
+    validate_ldap_security(normalized)
+    get_required(normalized, "LDAP_HOST")
+    parse_int(normalized, "LDAP_PORT", 636, minimum=1)
+    get_required(normalized, "LDAP_BASE_DN")
+    get_required(normalized, "LDAP_BIND_USER")
+    get_config_secret(
+        normalized, "LDAP_PASSWORD_FILE", "AD_BIND_PASSWORD", "LDAP password"
+    )
+    validate_mail_config(normalized)
 
 
 def parse_bool(value):
     return str(value).strip().lower() in ("true", "1", "yes", "y", "on")
+
+
+def parse_bool_config(config, key, default=False):
+    raw_value = config.get(key)
+    if raw_value is None or str(raw_value).strip() == "":
+        return default
+    normalized = str(raw_value).strip().lower()
+    if normalized in ("true", "1", "yes", "y", "on"):
+        return True
+    if normalized in ("false", "0", "no", "n", "off"):
+        return False
+    raise RuntimeError(f"{key} must be a boolean")
 
 
 def parse_notify_days(value):
@@ -208,6 +345,7 @@ def get_report_paths(config):
 
 
 def send_local_mail(config, to_addr, subject, body):
+    config = normalize_config(config)
     mail_from = get_required(config, "MAIL_FROM")
     test_mode = parse_bool(config.get("TEST_MODE", "true"))
 
@@ -229,8 +367,6 @@ def send_local_mail(config, to_addr, subject, body):
         print("")
         return
 
-    sendmail_path = config.get("SENDMAIL_PATH", DEFAULT_SENDMAIL_PATH)
-
     message = EmailMessage()
     message["From"] = mail_from
     message["To"] = to_addr
@@ -238,6 +374,11 @@ def send_local_mail(config, to_addr, subject, body):
     message["Subject"] = subject
     message.set_content(body)
 
+    if config["MAIL_TRANSPORT"] == "smtp":
+        send_smtp_mail(config, message)
+        return
+
+    sendmail_path = config.get("SENDMAIL_PATH", DEFAULT_SENDMAIL_PATH)
     process = subprocess.run(
         [sendmail_path, "-f", mail_from, "-t"],
         input=message.as_bytes(),
@@ -245,25 +386,73 @@ def send_local_mail(config, to_addr, subject, body):
         check=False,
         timeout=30
     )
-
     if process.returncode != 0:
         stderr = process.stderr.decode(errors="ignore")
         raise RuntimeError(f"sendmail failed: {stderr}")
 
 
+def send_smtp_mail(config, message):
+    host = get_required(config, "SMTP_HOST")
+    port = parse_int(config, "SMTP_PORT", 587, minimum=1)
+    security = config.get("SMTP_SECURITY", "starttls").lower()
+    context = ssl.create_default_context()
+    if security == "ssl":
+        client_context = smtplib.SMTP_SSL(
+            host, port, timeout=30, context=context
+        )
+    else:
+        client_context = smtplib.SMTP(host, port, timeout=30)
+
+    with client_context as client:
+        if security == "starttls":
+            client.starttls(context=context)
+        if config.get("SMTP_USER"):
+            if security == "none":
+                raise RuntimeError(
+                    "SMTP authentication requires SMTP_SECURITY=starttls or ssl"
+                )
+            password = get_config_secret(
+                config, "SMTP_PASSWORD_FILE", "SMTP_PASSWORD", "SMTP password"
+            )
+            client.login(config["SMTP_USER"], password)
+        client.send_message(message)
+
+
 def build_ldap_connection(config):
-    from ldap3 import Connection, Server
+    from ldap3 import Connection, Server, Tls
 
-    ad_server = get_required(config, "AD_SERVER")
-    ad_bind_user = get_required(config, "AD_BIND_USER")
-    ad_bind_password = get_required(config, "AD_BIND_PASSWORD")
+    config = normalize_config(config)
+    host = get_required(config, "LDAP_HOST")
+    port = parse_int(config, "LDAP_PORT", 636, minimum=1)
+    bind_user = get_required(config, "LDAP_BIND_USER")
+    bind_password = get_config_secret(
+        config, "LDAP_PASSWORD_FILE", "AD_BIND_PASSWORD", "LDAP password"
+    )
+    use_ssl = config["LDAP_MODE"] == "ldaps"
+    tls = None
+    if use_ssl:
+        tls = Tls(
+            validate=(
+                ssl.CERT_REQUIRED
+                if parse_bool(config.get("LDAP_TLS_VALIDATE", "true"))
+                else ssl.CERT_NONE
+            ),
+            ca_certs_file=config.get("LDAP_CA_FILE") or None,
+        )
 
-    server = Server(ad_server, get_info=None, connect_timeout=10)
+    server = Server(
+        host,
+        port=port,
+        use_ssl=use_ssl,
+        tls=tls,
+        get_info=None,
+        connect_timeout=10,
+    )
 
     connection = Connection(
         server,
-        user=ad_bind_user,
-        password=ad_bind_password,
+        user=bind_user,
+        password=bind_password,
         auto_bind=True
     )
 
@@ -273,7 +462,8 @@ def build_ldap_connection(config):
 def get_expiring_users(config):
     from ldap3 import SUBTREE
 
-    ad_base_dn = get_required(config, "AD_BASE_DN")
+    config = normalize_config(config)
+    ad_base_dn = get_required(config, "LDAP_BASE_DN")
     warning_days = parse_int(config, "WARNING_DAYS", 14, minimum=0)
     notify_days = parse_notify_days(config.get("NOTIFY_DAYS", ""))
 
@@ -494,25 +684,57 @@ def parse_args(argv):
     parser.add_argument(
         "--check-config",
         action="store_true",
-        help="Validate configuration and exit without querying LDAP"
+        help=argparse.SUPPRESS
     )
     parser.add_argument(
         "--check-ldap",
         action="store_true",
-        help="Validate configuration, bind to LDAP, then exit"
+        help=argparse.SUPPRESS
     )
     parser.add_argument(
         "--send-test-mail",
         metavar="EMAIL",
-        help="Send a test email to EMAIL using the configured mail settings"
+        help=argparse.SUPPRESS
     )
+    subparsers = parser.add_subparsers(dest="command")
 
-    return parser.parse_args(argv)
+    def add_command(name, help_text):
+        command_parser = subparsers.add_parser(name, help=help_text)
+        command_parser.add_argument(
+            "--config",
+            default=argparse.SUPPRESS,
+            help="Path to config.env",
+        )
+        return command_parser
+
+    add_command("validate", "Validate configuration and exit")
+    add_command("check-ldap", "Validate configuration and bind to LDAP")
+    check_mail_parser = add_command(
+        "check-mail", "Process a test message using the configured mail transport"
+    )
+    check_mail_parser.add_argument(
+        "--to", dest="mail_to", help="Recipient (defaults to TECH_REPORT_TO)"
+    )
+    add_command("run", "Run the password expiration workflow")
+
+    args = parser.parse_args(argv)
+    if args.check_config:
+        args.command = "validate"
+    elif args.check_ldap:
+        args.command = "check-ldap"
+    elif args.send_test_mail:
+        args.command = "check-mail"
+        args.mail_to = args.send_test_mail
+    elif args.command is None:
+        args.command = "run"
+    if not hasattr(args, "mail_to"):
+        args.mail_to = None
+    return args
 
 
 def load_and_validate_config(config_path):
     validate_config_file_permissions(config_path)
-    config = load_env_file(config_path)
+    config = normalize_config(load_env_file(config_path))
     validate_config(config, config_path)
     return config
 
@@ -523,26 +745,27 @@ def check_ldap(config):
 
 
 def main(argv=None):
-    args = parse_args(argv or sys.argv[1:])
+    args = parse_args(sys.argv[1:] if argv is None else argv)
     config = load_and_validate_config(args.config)
 
-    if args.check_config:
+    if args.command == "validate":
         print("[OK] Configuration is valid.")
         return
 
-    if args.check_ldap:
+    if args.command == "check-ldap":
         check_ldap(config)
         print("[OK] LDAP bind succeeded.")
         return
 
-    if args.send_test_mail:
+    if args.command == "check-mail":
+        recipient = args.mail_to or get_required(config, "TECH_REPORT_TO")
         send_local_mail(
             config,
-            args.send_test_mail,
+            recipient,
             f"[{APP_NAME}] Test email",
             "AD Password Sentinel test email."
         )
-        print(f"[OK] Test email processed for {args.send_test_mail}.")
+        print(f"[OK] Test email processed for {recipient}.")
         return
 
     warning_days = parse_int(config, "WARNING_DAYS", 14, minimum=0)

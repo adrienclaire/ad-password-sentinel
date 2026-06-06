@@ -1,157 +1,166 @@
 param(
-    [string]$ConfigPath = "C:\ADPasswordSentinel\config.json",
+    [string]$ConfigPath = (Join-Path $env:ProgramData "AD Password Sentinel\config.env"),
+    [string]$SecretPath = (Join-Path $env:ProgramData "AD Password Sentinel\secrets.json"),
+    [string]$PythonPath = (Join-Path $env:ProgramFiles "AD Password Sentinel\venv\Scripts\python.exe"),
     [switch]$CheckConfig,
     [switch]$CheckLdap,
-    [string]$SendTestMail
+    [string]$SendTestMail,
+    [string]$ValidateSmtp
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-function Read-Config {
-    param([string]$Path)
+function Read-EnvironmentFile {
+    param([Parameter(Mandatory = $true)][string]$Path)
 
-    if (-not (Test-Path -LiteralPath $Path)) {
-        throw "Config file not found: $Path"
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "Configuration file not found: $Path"
     }
 
-    Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
+    $values = [ordered]@{}
+    foreach ($line in Get-Content -LiteralPath $Path) {
+        $trimmed = $line.Trim()
+        if (-not $trimmed -or $trimmed.StartsWith("#") -or -not $trimmed.Contains("=")) {
+            continue
+        }
+
+        $parts = $trimmed.Split(@("="), 2, [StringSplitOptions]::None)
+        $values[$parts[0].Trim()] = [Environment]::ExpandEnvironmentVariables(
+            $parts[1].Trim().Trim('"').Trim("'")
+        )
+    }
+    return $values
 }
 
-function Test-RequiredConfig {
-    param($Config)
+function Set-RestrictedAcl {
+    param([Parameter(Mandatory = $true)][string]$Path)
 
-    $required = @(
-        "AdServer",
-        "SearchBase",
-        "BindUser",
-        "MailFrom",
-        "TechReportTo",
-        "SmtpServer"
+    $acl = [Security.AccessControl.FileSecurity]::new()
+    $acl.SetAccessRuleProtection($true, $false)
+    $systemSid = [Security.Principal.SecurityIdentifier]::new(
+        [Security.Principal.WellKnownSidType]::LocalSystemSid,
+        $null
+    )
+    $administratorsSid = [Security.Principal.SecurityIdentifier]::new(
+        [Security.Principal.WellKnownSidType]::BuiltinAdministratorsSid,
+        $null
+    )
+    foreach ($sid in @($systemSid, $administratorsSid)) {
+        $rule = [Security.AccessControl.FileSystemAccessRule]::new(
+            $sid,
+            [Security.AccessControl.FileSystemRights]::FullControl,
+            [Security.AccessControl.AccessControlType]::Allow
+        )
+        [void]$acl.AddAccessRule($rule)
+    }
+    Set-Acl -LiteralPath $Path -AclObject $acl
+}
+
+function Unprotect-MachineString {
+    param([Parameter(Mandatory = $true)][string]$ProtectedValue)
+
+    $protectedBytes = [Convert]::FromBase64String($ProtectedValue)
+    $plainBytes = [Security.Cryptography.ProtectedData]::Unprotect(
+        $protectedBytes,
+        $null,
+        [Security.Cryptography.DataProtectionScope]::LocalMachine
+    )
+    try {
+        return [Text.Encoding]::UTF8.GetString($plainBytes)
+    } finally {
+        [Array]::Clear($plainBytes, 0, $plainBytes.Length)
+    }
+}
+
+function Write-RestrictedText {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Value
     )
 
-    foreach ($key in $required) {
-        if (-not $Config.PSObject.Properties.Name.Contains($key) -or [string]::IsNullOrWhiteSpace($Config.$key)) {
-            throw "Missing required config value: $key"
+    [IO.File]::WriteAllText($Path, $Value, [Text.UTF8Encoding]::new($false))
+    Set-RestrictedAcl -Path $Path
+}
+
+if (-not (Test-Path -LiteralPath $SecretPath -PathType Leaf)) {
+    throw "Machine secret file not found: $SecretPath"
+}
+$secrets = Get-Content -LiteralPath $SecretPath -Raw | ConvertFrom-Json
+if (-not $secrets.PSObject.Properties.Name.Contains("AdBind")) {
+    throw "The machine secret file does not contain an AdBind credential."
+}
+
+$enginePath = Join-Path $PSScriptRoot "notify_ad_password_expiry.py"
+foreach ($path in @($PythonPath, $enginePath)) {
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        throw "Required runtime file not found: $path"
+    }
+}
+
+$runtimeId = [Guid]::NewGuid().ToString("N")
+$runtimeDirectory = Split-Path -Parent $ConfigPath
+$runtimeConfigPath = Join-Path $runtimeDirectory ".runtime-$runtimeId.env"
+$ldapPasswordPath = Join-Path $runtimeDirectory ".ldap-$runtimeId.secret"
+$smtpPasswordPath = Join-Path $runtimeDirectory ".smtp-$runtimeId.secret"
+$temporaryPaths = @($runtimeConfigPath, $ldapPasswordPath, $smtpPasswordPath)
+
+try {
+    $runtimeConfig = Read-EnvironmentFile -Path $ConfigPath
+    $runtimeConfig["MAIL_TRANSPORT"] = "smtp"
+
+    Write-RestrictedText `
+        -Path $ldapPasswordPath `
+        -Value (Unprotect-MachineString -ProtectedValue $secrets.AdBind.Password)
+    $runtimeConfig["LDAP_PASSWORD_FILE"] = $ldapPasswordPath
+
+    if ($secrets.PSObject.Properties.Name.Contains("Smtp")) {
+        Write-RestrictedText `
+            -Path $smtpPasswordPath `
+            -Value (Unprotect-MachineString -ProtectedValue $secrets.Smtp.Password)
+        $runtimeConfig["SMTP_USER"] = $secrets.Smtp.UserName
+        $runtimeConfig["SMTP_PASSWORD_FILE"] = $smtpPasswordPath
+    }
+
+    if ($ValidateSmtp) {
+        $runtimeConfig["TEST_MODE"] = "false"
+    }
+
+    $runtimeLines = foreach ($key in $runtimeConfig.Keys) {
+        $value = [string]$runtimeConfig[$key]
+        if ($value -match "[`r`n]") {
+            throw "Configuration value $key contains a line break."
+        }
+        "$key=$value"
+    }
+    [IO.File]::WriteAllLines(
+        $runtimeConfigPath,
+        [string[]]$runtimeLines,
+        [Text.UTF8Encoding]::new($false)
+    )
+    Set-RestrictedAcl -Path $runtimeConfigPath
+
+    $pythonArguments = @($enginePath, "--config", $runtimeConfigPath)
+    if ($CheckConfig) {
+        $pythonArguments += "validate"
+    } elseif ($CheckLdap) {
+        $pythonArguments += "check-ldap"
+    } elseif ($ValidateSmtp) {
+        $pythonArguments += @("check-mail", "--to", $ValidateSmtp)
+    } elseif ($SendTestMail) {
+        $pythonArguments += @("check-mail", "--to", $SendTestMail)
+    } else {
+        $pythonArguments += "run"
+    }
+
+    & $PythonPath @pythonArguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "Python engine exited with code $LASTEXITCODE."
+    }
+} finally {
+    foreach ($path in $temporaryPaths) {
+        if (Test-Path -LiteralPath $path) {
+            Remove-Item -LiteralPath $path -Force
         }
     }
-
-    if (
-        (-not $Config.PSObject.Properties.Name.Contains("CredentialPath") -or [string]::IsNullOrWhiteSpace($Config.CredentialPath)) -and
-        (-not $Config.PSObject.Properties.Name.Contains("BindPassword") -or [string]::IsNullOrWhiteSpace($Config.BindPassword))
-    ) {
-        throw "Missing required config value: CredentialPath or BindPassword"
-    }
-}
-
-function New-Credential {
-    param($Config)
-
-    if ($Config.PSObject.Properties.Name.Contains("CredentialPath") -and -not [string]::IsNullOrWhiteSpace($Config.CredentialPath)) {
-        return Import-Clixml -LiteralPath $Config.CredentialPath
-    }
-
-    $securePassword = ConvertTo-SecureString $Config.BindPassword -AsPlainText -Force
-    New-Object System.Management.Automation.PSCredential($Config.BindUser, $securePassword)
-}
-
-function Get-ExpiringAdUsers {
-    param($Config)
-
-    Import-Module ActiveDirectory
-
-    $warningDays = if ($Config.WarningDays) { [int]$Config.WarningDays } else { 14 }
-    $now = Get-Date
-    $credential = New-Credential -Config $Config
-
-    Get-ADUser `
-        -Server $Config.AdServer `
-        -Credential $credential `
-        -SearchBase $Config.SearchBase `
-        -LDAPFilter "(&(objectCategory=person)(objectClass=user)(!(userAccountControl:1.2.840.113556.1.4.803:=2))(!(userAccountControl:1.2.840.113556.1.4.803:=65536)))" `
-        -Properties DisplayName,mail,UserPrincipalName,msDS-UserPasswordExpiryTimeComputed |
-        ForEach-Object {
-            $rawExpiry = $_."msDS-UserPasswordExpiryTimeComputed"
-
-            if (-not $rawExpiry -or $rawExpiry -eq 9223372036854775807) {
-                return
-            }
-
-            $expiry = [DateTime]::FromFileTimeUtc([int64]$rawExpiry)
-            $daysLeft = [int]($expiry.Date - $now.Date).TotalDays
-
-            if ($daysLeft -lt 0 -or $daysLeft -le $warningDays) {
-                [PSCustomObject]@{
-                    SamAccountName = $_.SamAccountName
-                    DisplayName = $_.DisplayName
-                    Mail = $_.mail
-                    UserPrincipalName = $_.UserPrincipalName
-                    ExpiryDate = $expiry
-                    DaysLeft = $daysLeft
-                    Status = if ($daysLeft -lt 0) { "EXPIRED" } else { "EXPIRING_SOON" }
-                }
-            }
-        } | Sort-Object DaysLeft, SamAccountName
-}
-
-function Send-NotificationMail {
-    param(
-        $Config,
-        [string]$To,
-        [string]$Subject,
-        [string]$Body
-    )
-
-    if ($Config.TestMode -eq $true) {
-        Write-Host "TEST MODE: would send mail to $To"
-        Write-Host "Subject: $Subject"
-        Write-Host $Body
-        return
-    }
-
-    Send-MailMessage `
-        -SmtpServer $Config.SmtpServer `
-        -Port $(if ($Config.SmtpPort) { [int]$Config.SmtpPort } else { 25 }) `
-        -From $Config.MailFrom `
-        -To $To `
-        -Subject $Subject `
-        -Body $Body
-}
-
-$config = Read-Config -Path $ConfigPath
-Test-RequiredConfig -Config $config
-
-if ($CheckConfig) {
-    Write-Host "[OK] Configuration is valid."
-    exit 0
-}
-
-if ($CheckLdap) {
-    $null = Get-ExpiringAdUsers -Config $config | Select-Object -First 1
-    Write-Host "[OK] LDAP/AD query succeeded."
-    exit 0
-}
-
-if ($SendTestMail) {
-    Send-NotificationMail -Config $config -To $SendTestMail -Subject "[AD Password Sentinel] Test email" -Body "AD Password Sentinel test email."
-    Write-Host "[OK] Test email processed for $SendTestMail."
-    exit 0
-}
-
-$results = @(Get-ExpiringAdUsers -Config $config)
-$reportDir = if ($config.ReportDir) { $config.ReportDir } else { "C:\ProgramData\ADPasswordSentinel" }
-New-Item -ItemType Directory -Path $reportDir -Force | Out-Null
-
-$csvPath = Join-Path $reportDir "ad-password-expiry-report.csv"
-$results | Export-Csv -Path $csvPath -NoTypeInformation -Encoding UTF8
-
-$body = @(
-    "AD Password Sentinel - password expiration report",
-    "",
-    "Accounts found: $($results.Count)",
-    "CSV local: $csvPath"
-) -join "`r`n"
-
-if ($results.Count -gt 0 -or $config.AlwaysSendReport -eq $true) {
-    Send-NotificationMail -Config $config -To $config.TechReportTo -Subject "[AD Password Sentinel] Password expiration report - $($results.Count) account(s)" -Body $body
 }
