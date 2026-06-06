@@ -75,9 +75,10 @@ The Linux installer follows this order:
 5. Write an LDAPS configuration using port 636, certificate validation, and
    `ALLOW_INSECURE_LDAP=false`.
 6. Perform an authenticated LDAPS bind.
-7. If the bind fails, offer to install an operator-supplied issuing CA
-   certificate into an application-specific trust file after validating its
-   out-of-band SHA-256 fingerprint, then retry LDAPS.
+7. If the bind fails and the failure is certificate-related, provide an
+   operator-supplied issuing CA certificate and its out-of-band SHA-256
+   fingerprint. The installer stores it in an application-specific trust file
+   and retries LDAPS.
 8. Only after LDAPS still fails, offer an explicit downgrade to unencrypted
    LDAP on TCP 389. The default answer is no.
 9. If accepted, set `LDAP_MODE=ldap`, `LDAP_PORT=389`,
@@ -113,6 +114,37 @@ possible. The Linux installer stores it in `/etc/ad-password-sentinel/ldap-ca.cr
 and references it through `LDAP_CA_FILE`; it does not modify the system trust
 store. Importing an expired certificate does not make it valid.
 
+If you want to trust the AD CA system-wide on Linux before running the
+installer, use the standard Linux CA store.
+
+Ubuntu and Debian:
+
+```bash
+sudo cp /path/to/HOMELAB-CA.cer /usr/local/share/ca-certificates/HOMELAB-CA.crt
+sudo update-ca-certificates
+```
+
+RHEL, Rocky Linux, AlmaLinux, and compatible systems:
+
+```bash
+sudo cp /path/to/HOMELAB-CA.cer /etc/pki/ca-trust/source/anchors/HOMELAB-CA.crt
+sudo update-ca-trust extract
+```
+
+After importing the CA, validate LDAPS directly before running the installer:
+
+```bash
+getent hosts dc01.homelab.local
+openssl s_client -connect dc01.homelab.local:636 \
+  -servername dc01.homelab.local -brief </dev/null
+ldapwhoami -x -H ldaps://dc01.homelab.local:636 \
+  -D "svc_psw_notify@homelab.local" -W
+```
+
+If those commands succeed and the installer still asks for a certificate, the
+certificate is probably not the real problem anymore. The remaining failure is
+more likely a bind, hostname, chain, or installer error path.
+
 Inspect a certificate before trusting it:
 
 ```bash
@@ -120,8 +152,10 @@ openssl s_client -connect dc01.example.local:636 \
   -servername dc01.example.local -showcerts
 ```
 
-The Linux installer can import the certificate presented by the DC after an
-LDAPS failure. Verify its issuer and fingerprint before trusting it.
+The Linux installer does not auto-trust whatever certificate the DC presents.
+That is intentional. Trusting a certificate fetched from the failing endpoint
+would be unsafe. The installer only accepts an operator-supplied CA file plus
+an expected SHA-256 fingerprint.
 
 ## Windows: Elevated PowerShell
 
@@ -298,6 +332,8 @@ getent hosts dc01.example.local
 nc -vz dc01.example.local 636
 openssl s_client -connect dc01.example.local:636 \
   -servername dc01.example.local -verify_return_error
+ldapwhoami -x -H ldaps://dc01.example.local:636 \
+  -D "svc_bind@example.local" -W
 ```
 
 On Windows:
