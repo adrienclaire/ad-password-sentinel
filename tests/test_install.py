@@ -1,17 +1,17 @@
 import unittest
 
 from install import (
+    choose_prompt_backend,
     build_cron_command,
     build_logrotate_config,
     build_postfix_relay_commands,
     build_postfix_backup_path,
     build_post_install_verification_commands,
     build_venv_python_path,
-    can_use_gum_interactively,
+    can_use_dialog_interactively,
     cron_expression,
     ldap_port_from_server,
     parse_args,
-    should_use_gum,
 )
 
 
@@ -76,25 +76,38 @@ class InstallTests(unittest.TestCase):
         self.assertIn("--check-ldap", joined)
         self.assertIn("--send-test-mail it-support@example.com", joined)
 
-    def test_should_use_gum_requires_explicit_opt_in(self):
-        self.assertFalse(should_use_gum(gum_present=True, user_requested=False))
-        self.assertTrue(should_use_gum(gum_present=True, user_requested=True))
-        self.assertFalse(should_use_gum(gum_present=False, user_requested=True))
+    def test_can_use_dialog_interactively_requires_tty_and_term(self):
+        self.assertTrue(can_use_dialog_interactively(stdin_isatty=True, stdout_isatty=True, term="xterm-256color"))
+        self.assertFalse(can_use_dialog_interactively(stdin_isatty=False, stdout_isatty=True, term="xterm-256color"))
+        self.assertFalse(can_use_dialog_interactively(stdin_isatty=True, stdout_isatty=False, term="xterm-256color"))
+        self.assertFalse(can_use_dialog_interactively(stdin_isatty=True, stdout_isatty=True, term="dumb"))
 
-    def test_can_use_gum_interactively_requires_tty_and_term(self):
-        self.assertTrue(can_use_gum_interactively(stdin_isatty=True, stdout_isatty=True, term="xterm-256color"))
-        self.assertFalse(can_use_gum_interactively(stdin_isatty=False, stdout_isatty=True, term="xterm-256color"))
-        self.assertFalse(can_use_gum_interactively(stdin_isatty=True, stdout_isatty=False, term="xterm-256color"))
-        self.assertFalse(can_use_gum_interactively(stdin_isatty=True, stdout_isatty=True, term="dumb"))
-
-    def test_parse_args_defaults_to_plain_ui(self):
+    def test_parse_args_defaults_to_auto_ui(self):
         args = parse_args([])
-        self.assertEqual(args.ui, "plain")
+        self.assertEqual(args.ui, "auto")
         self.assertFalse(args.prompt_smoke_test)
 
     def test_parse_args_supports_prompt_smoke_test(self):
         args = parse_args(["--prompt-smoke-test"])
         self.assertTrue(args.prompt_smoke_test)
+
+    def test_choose_prompt_backend_prefers_whiptail_in_auto_mode(self):
+        backend = choose_prompt_backend(
+            requested_ui="auto",
+            has_whiptail=True,
+            has_dialog=True,
+            is_interactive=True,
+        )
+        self.assertEqual(backend, "whiptail")
+
+    def test_choose_prompt_backend_falls_back_to_plain_when_non_interactive(self):
+        backend = choose_prompt_backend(
+            requested_ui="auto",
+            has_whiptail=True,
+            has_dialog=True,
+            is_interactive=False,
+        )
+        self.assertEqual(backend, "plain")
 
 
 if __name__ == "__main__":

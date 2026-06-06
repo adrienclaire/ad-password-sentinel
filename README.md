@@ -19,7 +19,7 @@ AD Password Sentinel notifies IT teams, and optionally users, before Active Dire
 - LDAP network access to a domain controller.
 - A least-privilege AD bind account.
 - Local `sendmail` interface, usually provided by Postfix, when `TEST_MODE=false`.
-- Optional: `gum` for nicer installer prompts when explicitly requested with `--ui gum`. The default installer uses plain numbered prompts.
+- Optional: `whiptail` or `dialog` for blue-screen installer prompts. The default installer uses them automatically when available and falls back to plain numbered prompts.
 
 Install Python dependencies:
 
@@ -48,24 +48,28 @@ cd ad-password-sentinel
 sudo python3 install.py
 ```
 
-Optional `gum` prompts:
+Optional blue-screen prompts:
 
 ```bash
 # Debian/Ubuntu example
-sudo mkdir -p /etc/apt/keyrings
-curl -fsSL https://repo.charm.sh/apt/gpg.key | sudo gpg --dearmor -o /etc/apt/keyrings/charm.gpg
-echo "deb [signed-by=/etc/apt/keyrings/charm.gpg] https://repo.charm.sh/apt/ * *" | sudo tee /etc/apt/sources.list.d/charm.list
 sudo apt update
-sudo apt install gum
+sudo apt install whiptail
 ```
 
-`gum` is optional and not used by default. To request it explicitly:
+The installer defaults to `--ui auto`: it uses `whiptail` first, `dialog` second, and plain prompts if neither is available or the terminal is not suitable.
+
+Force plain prompts:
 
 ```bash
-sudo python3 install.py --ui gum
+sudo python3 install.py --ui plain
 ```
 
-If a `gum` prompt cannot render correctly under `sudo`, the installer times out and falls back to plain prompts.
+Force a specific blue-screen backend:
+
+```bash
+sudo python3 install.py --ui whiptail
+sudo python3 install.py --ui dialog
+```
 
 Windows:
 
@@ -183,7 +187,7 @@ Run as root:
 python3 install.py
 ```
 
-The installer prompts for LDAP settings, mail settings, whether to notify users, and cron frequency. It uses plain numbered prompts by default. The recommended schedule is every day at 08:00.
+The installer prompts for LDAP settings, mail settings, whether to notify users, and cron frequency. It uses `whiptail`/`dialog` when available and plain numbered prompts otherwise. The recommended schedule is every day at 08:00.
 
 Prompt smoke test:
 

@@ -22,33 +22,48 @@ PROJECT_DIR = Path(__file__).resolve().parent
 LOCK_PATH = Path("/var/lock/ad-password-sentinel.lock")
 VENV_DIR = INSTALL_DIR / ".venv"
 LOGROTATE_PATH = Path("/etc/logrotate.d/ad-password-sentinel")
-USE_GUM = False
-GUM_TIMEOUT_SECONDS = 15
+PROMPT_BACKEND = "plain"
+DIALOG_TIMEOUT_SECONDS = 120
 
 
-def gum_available():
-    return USE_GUM and command_exists("gum")
+def dialog_available():
+    return PROMPT_BACKEND in ("whiptail", "dialog") and command_exists(PROMPT_BACKEND)
 
 
-def should_use_gum(gum_present, user_requested):
-    return gum_present and user_requested
-
-
-def can_use_gum_interactively(stdin_isatty, stdout_isatty, term):
+def can_use_dialog_interactively(stdin_isatty, stdout_isatty, term):
     return stdin_isatty and stdout_isatty and bool(term) and term != "dumb"
 
 
-def run_gum(command, capture_output=False):
+def choose_prompt_backend(requested_ui, has_whiptail, has_dialog, is_interactive):
+    if requested_ui == "plain" or not is_interactive:
+        return "plain"
+
+    if requested_ui == "whiptail":
+        return "whiptail" if has_whiptail else "plain"
+
+    if requested_ui == "dialog":
+        return "dialog" if has_dialog else "plain"
+
+    if has_whiptail:
+        return "whiptail"
+
+    if has_dialog:
+        return "dialog"
+
+    return "plain"
+
+
+def run_dialog(command, capture_output=False):
     try:
         return subprocess.run(
             command,
             text=True,
-            capture_output=capture_output,
+            stdout=subprocess.PIPE if capture_output else None,
             check=False,
-            timeout=GUM_TIMEOUT_SECONDS,
+            timeout=DIALOG_TIMEOUT_SECONDS,
         )
     except subprocess.TimeoutExpired:
-        print("gum prompt timed out. Falling back to plain prompts.")
+        print("Installer dialog timed out. Falling back to plain prompts.")
         return None
 
 
@@ -94,9 +109,9 @@ def parse_args(argv):
     parser = argparse.ArgumentParser(description=f"{APP_NAME} Linux installer")
     parser.add_argument(
         "--ui",
-        choices=("plain", "gum"),
-        default="plain",
-        help="Prompt UI to use. Default: plain"
+        choices=("auto", "plain", "whiptail", "dialog"),
+        default="auto",
+        help="Prompt UI to use. Default: auto"
     )
     parser.add_argument(
         "--prompt-smoke-test",
@@ -106,16 +121,19 @@ def parse_args(argv):
     return parser.parse_args(argv)
 
 
-def gum_input(label, default=None, secret=False):
-    command = ["gum", "input", "--prompt", f"{label}: "]
+def dialog_input(label, default=None, secret=False):
+    command = [PROMPT_BACKEND, "--output-fd", "1"]
 
-    if default:
-        command.extend(["--value", default])
+    if PROMPT_BACKEND == "whiptail":
+        command.extend(["--title", APP_NAME])
 
-    if secret:
-        command.append("--password")
+    box_type = "--passwordbox" if secret else "--inputbox"
+    command.extend([box_type, label, "10", "72"])
 
-    result = run_gum(command, capture_output=True)
+    if default and not secret:
+        command.append(default)
+
+    result = run_dialog(command, capture_output=True)
 
     if result is None or result.returncode != 0:
         return plain_prompt(label, default, secret)
@@ -124,50 +142,78 @@ def gum_input(label, default=None, secret=False):
     return value if value else default
 
 
-def gum_confirm(label, default=False):
-    command = ["gum", "confirm", label]
+def dialog_confirm(label, default=False):
+    command = [PROMPT_BACKEND]
 
-    if default:
-        command.append("--default=true")
+    if PROMPT_BACKEND == "whiptail":
+        command.extend(["--title", APP_NAME])
 
-    result = run_gum(command)
+    if not default:
+        command.append("--defaultno")
 
-    if result is not None and result.returncode in (0, 1):
-        return result.returncode == 0
+    command.extend(["--yesno", label, "10", "72"])
+
+    result = run_dialog(command)
+
+    if result is None:
+        return plain_yes_no(label, default)
+
+    if result.returncode == 0:
+        return True
+
+    if result.returncode == 1:
+        return False
 
     return plain_yes_no(label, default)
 
 
-def gum_choose(label, choices, default=None):
-    print(label)
-    command = ["gum", "choose"]
-    command.extend(choices)
-    result = run_gum(command, capture_output=True)
+def dialog_choose(label, choices, default=None):
+    command = [PROMPT_BACKEND, "--output-fd", "1"]
+
+    if PROMPT_BACKEND == "whiptail":
+        command.extend(["--title", APP_NAME])
+
+    command.extend(["--menu", label, "18", "78", str(min(len(choices), 10))])
+
+    for index, choice in enumerate(choices, start=1):
+        marker = " (default)" if choice == default else ""
+        command.extend([str(index), f"{choice}{marker}"])
+
+    result = run_dialog(command, capture_output=True)
 
     if result is None or result.returncode != 0:
         return plain_choose(label, choices, default)
 
-    value = result.stdout.strip()
-    return value if value else default
+    raw_value = result.stdout.strip()
+
+    try:
+        index = int(raw_value) - 1
+    except ValueError:
+        return default or choices[0]
+
+    if 0 <= index < len(choices):
+        return choices[index]
+
+    return default or choices[0]
 
 
 def prompt(label, default=None, secret=False):
-    if gum_available():
-        return gum_input(label, default, secret)
+    if dialog_available():
+        return dialog_input(label, default, secret)
 
     return plain_prompt(label, default, secret)
 
 
 def yes_no(label, default=False):
-    if gum_available():
-        return gum_confirm(label, default)
+    if dialog_available():
+        return dialog_confirm(label, default)
 
     return plain_yes_no(label, default)
 
 
 def choose(label, choices, default=None):
-    if gum_available():
-        return gum_choose(label, choices, default)
+    if dialog_available():
+        return dialog_choose(label, choices, default)
 
     return plain_choose(label, choices, default)
 
@@ -222,53 +268,57 @@ def detect_package_manager():
     return None
 
 
-def install_gum():
+def install_dialog_backend():
     manager = detect_package_manager()
 
     if manager is None:
-        print("No supported package manager found. Continuing with plain prompts.")
+        print("No supported package manager found. Install whiptail or dialog manually for blue-screen prompts.")
         return False
 
     if manager == "apt-get":
-        if not command_exists("curl") or not command_exists("gpg"):
-            print("Installing gum on Debian/Ubuntu requires curl and gpg. Continuing with plain prompts.")
-            return False
-
-        key_path = "/tmp/charm.gpg.key"
-        run(["mkdir", "-p", "/etc/apt/keyrings"])
-        run(["curl", "-fsSL", "https://repo.charm.sh/apt/gpg.key", "-o", key_path])
-        run(["gpg", "--dearmor", "--yes", "-o", "/etc/apt/keyrings/charm.gpg", key_path])
-
-        Path("/etc/apt/sources.list.d/charm.list").write_text(
-            "deb [signed-by=/etc/apt/keyrings/charm.gpg] https://repo.charm.sh/apt/ * *\n",
-            encoding="utf-8"
-        )
         run(["apt-get", "update"])
-        run(["apt-get", "install", "-y", "gum"])
-        return command_exists("gum")
+        run(["apt-get", "install", "-y", "whiptail"])
+        return command_exists("whiptail")
 
-    run([manager, "install", "-y", "gum"])
-    return command_exists("gum")
+    run([manager, "install", "-y", "newt"])
+    return command_exists("whiptail") or command_exists("dialog")
 
 
 def configure_prompt_backend(ui):
-    global USE_GUM
+    global PROMPT_BACKEND
 
-    if ui == "plain":
-        USE_GUM = False
+    is_interactive = can_use_dialog_interactively(
+        sys.stdin.isatty(),
+        sys.stdout.isatty(),
+        os.environ.get("TERM", ""),
+    )
+    PROMPT_BACKEND = choose_prompt_backend(
+        requested_ui=ui,
+        has_whiptail=command_exists("whiptail"),
+        has_dialog=command_exists("dialog"),
+        is_interactive=is_interactive,
+    )
+
+    if PROMPT_BACKEND != "plain":
+        print(f"Using {PROMPT_BACKEND} installer UI.")
         return
 
-    if not can_use_gum_interactively(sys.stdin.isatty(), sys.stdout.isatty(), os.environ.get("TERM", "")):
-        print("Interactive terminal not detected. Using plain prompts.")
-        USE_GUM = False
+    if ui == "auto" and is_interactive and plain_yes_no("Install whiptail for blue-screen installer prompts", False):
+        if install_dialog_backend():
+            PROMPT_BACKEND = choose_prompt_backend(
+                requested_ui="auto",
+                has_whiptail=command_exists("whiptail"),
+                has_dialog=command_exists("dialog"),
+                is_interactive=is_interactive,
+            )
+            print(f"Using {PROMPT_BACKEND} installer UI.")
+            return
+
+    if ui in ("whiptail", "dialog"):
+        print(f"{ui} is unavailable. Using plain prompts.")
         return
 
-    if command_exists("gum"):
-        USE_GUM = should_use_gum(gum_present=True, user_requested=True)
-        return
-
-    print("gum is not installed. Continuing with plain prompts.")
-    USE_GUM = False
+    print("Using plain installer prompts.")
 
 
 def install_postfix():
