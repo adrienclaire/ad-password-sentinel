@@ -4,6 +4,8 @@ import unittest
 from unittest.mock import patch
 
 from notify_ad_password_expiry import (
+    check_ldap,
+    safe_ldap_unbind,
     send_local_mail,
     validate_config,
 )
@@ -102,6 +104,50 @@ class RuntimeConfigTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "SMTP authentication requires"):
             send_local_mail(config, "admin@example.com", "Test", "Body")
         smtp_class.assert_called_once_with("smtp.example.com", 25, timeout=30)
+
+    def test_safe_ldap_unbind_ignores_connection_reset(self):
+        connection = unittest.mock.Mock()
+        connection.unbind.side_effect = ConnectionResetError(104, "Connection reset by peer")
+
+        safe_ldap_unbind(connection)
+
+        connection.unbind.assert_called_once()
+
+    def test_safe_ldap_unbind_re_raises_unexpected_oserror(self):
+        connection = unittest.mock.Mock()
+        connection.unbind.side_effect = OSError(13, "Permission denied")
+
+        with self.assertRaises(OSError):
+            safe_ldap_unbind(connection)
+
+    def test_safe_ldap_unbind_ignores_ldap_socket_receive_error(self):
+        connection = unittest.mock.Mock()
+        error = type("LDAPSocketReceiveError", (Exception,), {})
+        connection.unbind.side_effect = error("reset")
+
+        safe_ldap_unbind(connection)
+
+        connection.unbind.assert_called_once()
+
+    @patch("notify_ad_password_expiry.safe_ldap_unbind")
+    @patch("notify_ad_password_expiry.build_ldap_connection")
+    def test_check_ldap_treats_successful_bind_as_success(self, build_connection, safe_unbind):
+        connection = unittest.mock.Mock()
+        build_connection.return_value = connection
+
+        check_ldap({"LDAP_HOST": "dc01.homelab.local"})
+
+        build_connection.assert_called_once()
+        safe_unbind.assert_called_once_with(connection)
+
+    def test_runtime_uses_explicit_open_and_bind_for_ldap_connection(self):
+        source = (Path(__file__).resolve().parents[1] / "notify_ad_password_expiry.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("auto_bind=False", source)
+        self.assertIn("connection.open()", source)
+        self.assertIn("connection.bind()", source)
 
 
 if __name__ == "__main__":

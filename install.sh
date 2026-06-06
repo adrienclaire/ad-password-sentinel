@@ -93,8 +93,12 @@ run_interactive() {
   fi
 }
 
+tty_usable() {
+  [ -t 0 ] && [ -t 1 ] && [ -r /dev/tty ] && [ -w /dev/tty ]
+}
+
 ui_can_prompt() {
-  [ -r /dev/tty ] && [ -w /dev/tty ] && [ "${TERM:-dumb}" != "dumb" ]
+  tty_usable && [ "${TERM:-dumb}" != "dumb" ]
 }
 
 whiptail_usable() {
@@ -111,7 +115,7 @@ plain_input() {
   local suffix=""
 
   [ -n "$default" ] && suffix=" [$default]"
-  if [ -r /dev/tty ] && [ -w /dev/tty ]; then
+  if tty_usable; then
     printf '%s%s: ' "$prompt" "$suffix" > /dev/tty
     if [ "$secret" -eq 1 ]; then
       stty -echo < /dev/tty 2>/dev/null || true
@@ -193,7 +197,7 @@ ui_menu() {
     return
   fi
 
-  if [ -w /dev/tty ]; then
+  if tty_usable; then
     printf '%s\n' "$prompt" > /dev/tty
   else
     printf '%s\n' "$prompt" >&2
@@ -202,7 +206,7 @@ ui_menu() {
     tag="$1"
     description="$2"
     shift 2
-    if [ -w /dev/tty ]; then
+    if tty_usable; then
       printf '  %s) %s%s\n' "$tag" "$description" "$([ "$tag" = "$default" ] && printf ' (recommended)')" > /dev/tty
     else
       printf '  %s) %s%s\n' "$tag" "$description" "$([ "$tag" = "$default" ] && printf ' (recommended)')" >&2
@@ -688,6 +692,17 @@ explain_ldaps_failure() {
 verify_directory() {
   local connect_host="${LDAP_CONNECT_HOST:-$(config_value LDAP_HOST)}"
   local tls_name="${LDAP_TLS_NAME:-$(config_value LDAP_HOST)}"
+  local retry_mode="${LDAP_MODE:-$(config_value LDAP_MODE 2>/dev/null || true)}"
+
+  # A previous failed run may have preserved an LDAP fallback state. Always
+  # restore the intended LDAPS settings before the primary verification path.
+  if [ "$retry_mode" != "ldaps" ]; then
+    set_config_value LDAP_MODE ldaps
+    set_config_value LDAP_PORT 636
+    set_config_value LDAP_TLS_VALIDATE true
+    set_config_value AD_SERVER "ldaps://$tls_name:636"
+    set_config_value ALLOW_INSECURE_LDAP false
+  fi
 
   if runtime_check check-ldap; then
     return 0

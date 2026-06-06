@@ -84,6 +84,14 @@ class InstallCompatibilityTests(unittest.TestCase):
 
         self.assertIn('chown "root:$SERVICE_USER" "$tmp"', source)
 
+    def test_linux_installer_restores_ldaps_before_rechecking_preserved_config(self):
+        source = (ROOT / "install.sh").read_text(encoding="utf-8")
+
+        self.assertIn('if [ "$retry_mode" != "ldaps" ]; then', source)
+        self.assertIn('set_config_value LDAP_MODE ldaps', source)
+        self.assertIn('set_config_value LDAP_PORT 636', source)
+        self.assertIn('set_config_value AD_SERVER "ldaps://$tls_name:636"', source)
+
 
 if __name__ == "__main__":
     unittest.main()

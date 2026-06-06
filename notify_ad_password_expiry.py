@@ -5,6 +5,7 @@ from email.message import EmailMessage
 from email.utils import formatdate
 from pathlib import Path
 import argparse
+import errno
 import smtplib
 import os
 import re
@@ -453,10 +454,34 @@ def build_ldap_connection(config):
         server,
         user=bind_user,
         password=bind_password,
-        auto_bind=True
+        auto_bind=False,
+        raise_exceptions=True,
     )
+    connection.open()
+    connection.bind()
 
     return connection
+
+
+def safe_ldap_unbind(connection):
+    try:
+        connection.unbind()
+    except OSError as exc:
+        if exc.errno not in {
+            104,
+            54,
+            errno.ECONNRESET,
+            errno.ECONNABORTED,
+            10053,
+            10054,
+        }:
+            raise
+    except Exception as exc:
+        if exc.__class__.__name__ not in {
+            "LDAPSocketReceiveError",
+            "LDAPSessionTerminatedByServerError",
+        }:
+            raise
 
 
 def get_expiring_users(config):
@@ -539,7 +564,7 @@ def get_expiring_users(config):
                 "status": status
             })
     finally:
-        connection.unbind()
+        safe_ldap_unbind(connection)
 
     results.sort(key=lambda item: (item["days_left"], item["sam"] or ""))
 
@@ -741,7 +766,7 @@ def load_and_validate_config(config_path):
 
 def check_ldap(config):
     connection = build_ldap_connection(config)
-    connection.unbind()
+    safe_ldap_unbind(connection)
 
 
 def main(argv=None):
