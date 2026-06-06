@@ -329,6 +329,9 @@ set_config_value() {
     END { if (!found) print key "=" value }
   ' "$CONFIG_PATH" > "$tmp"
   chmod 640 "$tmp"
+  if [ "$(id -u)" -eq 0 ]; then
+    chown "root:$SERVICE_USER" "$tmp"
+  fi
   mv "$tmp" "$CONFIG_PATH"
 }
 

@@ -79,6 +79,11 @@ class InstallCompatibilityTests(unittest.TestCase):
         self.assertIn("sed 's/^SHA256[[:space:]]*FINGERPRINT=//'", source)
         self.assertIn("tr -cd '0-9A-F'", source)
 
+    def test_linux_installer_preserves_service_group_on_config_rewrites(self):
+        source = (ROOT / "install.sh").read_text(encoding="utf-8")
+
+        self.assertIn('chown "root:$SERVICE_USER" "$tmp"', source)
+
 
 if __name__ == "__main__":
     unittest.main()
