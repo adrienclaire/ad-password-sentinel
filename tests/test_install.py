@@ -67,6 +67,18 @@ class InstallCompatibilityTests(unittest.TestCase):
         self.assertNotIn("/dev/tcp/$host/$port", source)
         self.assertIn("socket.create_connection", source)
 
+    def test_linux_installer_keeps_runtime_tree_executable_for_service_user(self):
+        source = (ROOT / "install.sh").read_text(encoding="utf-8")
+
+        self.assertIn('chmod -R a+rX "$INSTALL_DIR"', source)
+        self.assertIn('chmod -R go-w "$INSTALL_DIR"', source)
+
+    def test_linux_installer_accepts_openssl_style_sha256_fingerprint_input(self):
+        source = (ROOT / "install.sh").read_text(encoding="utf-8")
+
+        self.assertIn("sed 's/^SHA256[[:space:]]*FINGERPRINT=//'", source)
+        self.assertIn("tr -cd '0-9A-F'", source)
+
 
 if __name__ == "__main__":
     unittest.main()

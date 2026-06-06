@@ -395,6 +395,9 @@ install_application_files() {
     "$VENV_DIR/bin/python" -m pip install --upgrade pip
     "$VENV_DIR/bin/python" -m pip install -r "$INSTALL_DIR/requirements.txt"
     run_root chown -R root:root "$INSTALL_DIR"
+    # The runtime executes as the dedicated service account, so the installed
+    # tree must remain readable and traversable while staying non-writable.
+    run_root chmod -R a+rX "$INSTALL_DIR"
     run_root chmod -R go-w "$INSTALL_DIR"
     run_root chown -R "$SERVICE_USER:$SERVICE_USER" "$LOG_DIR"
     run_root chown -R root:"$SERVICE_USER" "$CONFIG_DIR"
@@ -496,7 +499,12 @@ install_operator_ca_file() {
     warn "Could not read a SHA-256 fingerprint from $source_path"
     return 1
   }
-  expected_fingerprint="$(printf '%s' "$expected_fingerprint" | tr -d '[:space:]:' | tr '[:lower:]' '[:upper:]')"
+  expected_fingerprint="$(
+    printf '%s' "$expected_fingerprint" |
+      tr '[:lower:]' '[:upper:]' |
+      sed 's/^SHA256[[:space:]]*FINGERPRINT=//' |
+      tr -cd '0-9A-F'
+  )"
   [ "$actual_fingerprint" = "$expected_fingerprint" ] || {
     warn "Fingerprint mismatch for $source_path"
     warn "Expected: $expected_fingerprint"
